@@ -55,44 +55,44 @@ func (i *CFItem) UserMeta() []byte {
 }
 
 type BadgerIterator struct {
-	iter   *badger.Iterator
-	prefix string
+	Iter   *badger.Iterator
+	Prefix string
 }
 
 func NewCFIterator(cf string, txn *badger.Txn) *BadgerIterator {
 	return &BadgerIterator{
-		iter:   txn.NewIterator(badger.DefaultIteratorOptions),
-		prefix: cf + "_",
+		Iter:   txn.NewIterator(badger.DefaultIteratorOptions),
+		Prefix: cf + "_",
 	}
 }
 
 func (it *BadgerIterator) Item() DBItem {
 	return &CFItem{
-		item:      it.iter.Item(),
-		prefixLen: len(it.prefix),
+		item:      it.Iter.Item(),
+		prefixLen: len(it.Prefix),
 	}
 }
 
-func (it *BadgerIterator) Valid() bool { return it.iter.ValidForPrefix([]byte(it.prefix)) }
+func (it *BadgerIterator) Valid() bool { return it.Iter.ValidForPrefix([]byte(it.Prefix)) }
 
 func (it *BadgerIterator) ValidForPrefix(prefix []byte) bool {
-	return it.iter.ValidForPrefix(append(prefix, []byte(it.prefix)...))
+	return it.Iter.ValidForPrefix(append(prefix, []byte(it.Prefix)...))
 }
 
 func (it *BadgerIterator) Close() {
-	it.iter.Close()
+	it.Iter.Close()
 }
 
 func (it *BadgerIterator) Next() {
-	it.iter.Next()
+	it.Iter.Next()
 }
 
 func (it *BadgerIterator) Seek(key []byte) {
-	it.iter.Seek(append([]byte(it.prefix), key...))
+	it.Iter.Seek(append([]byte(it.Prefix), key...))
 }
 
 func (it *BadgerIterator) Rewind() {
-	it.iter.Rewind()
+	it.Iter.Rewind()
 }
 
 type DBIterator interface {

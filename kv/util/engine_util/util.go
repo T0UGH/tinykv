@@ -7,10 +7,12 @@ import (
 	"github.com/golang/protobuf/proto"
 )
 
+// 工具函数，拼接cf和key
 func KeyWithCF(cf string, key []byte) []byte {
 	return append([]byte(cf+"_"), key...)
 }
 
+// 获取key对应的value
 func GetCF(db *badger.DB, cf string, key []byte) (val []byte, err error) {
 	err = db.View(func(txn *badger.Txn) error {
 		val, err = GetCFFromTxn(txn, cf, key)
@@ -19,6 +21,7 @@ func GetCF(db *badger.DB, cf string, key []byte) (val []byte, err error) {
 	return
 }
 
+// 按照事务获取key对应的value
 func GetCFFromTxn(txn *badger.Txn, cf string, key []byte) (val []byte, err error) {
 	item, err := txn.Get(KeyWithCF(cf, key))
 	if err != nil {
@@ -28,14 +31,17 @@ func GetCFFromTxn(txn *badger.Txn, cf string, key []byte) (val []byte, err error
 	return
 }
 
+// 将k-v插入到数据库中, write_batch用来放一堆，这个用来放一个
 func PutCF(engine *badger.DB, cf string, key []byte, val []byte) error {
 	return engine.Update(func(txn *badger.Txn) error {
 		return txn.Set(KeyWithCF(cf, key), val)
 	})
 }
 
+// 获取元数据
 func GetMeta(engine *badger.DB, key []byte, msg proto.Message) error {
 	var val []byte
+	// View执行了一个功能，该功能为用户创建和管理只读事务。 函数返回的错误由View方法中继。
 	err := engine.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(key)
 		if err != nil {
@@ -50,6 +56,7 @@ func GetMeta(engine *badger.DB, key []byte, msg proto.Message) error {
 	return proto.Unmarshal(val, msg)
 }
 
+// 从事务中获取元数据
 func GetMetaFromTxn(txn *badger.Txn, key []byte, msg proto.Message) error {
 	item, err := txn.Get(key)
 	if err != nil {
@@ -62,6 +69,7 @@ func GetMetaFromTxn(txn *badger.Txn, key []byte, msg proto.Message) error {
 	return proto.Unmarshal(val, msg)
 }
 
+// 更新元数据
 func PutMeta(engine *badger.DB, key []byte, msg proto.Message) error {
 	val, err := proto.Marshal(msg)
 	if err != nil {
@@ -72,12 +80,14 @@ func PutMeta(engine *badger.DB, key []byte, msg proto.Message) error {
 	})
 }
 
+// 删除一个key
 func DeleteCF(engine *badger.DB, cf string, key []byte) error {
 	return engine.Update(func(txn *badger.Txn) error {
 		return txn.Delete(KeyWithCF(cf, key))
 	})
 }
 
+// 删除一个key的区间
 func DeleteRange(db *badger.DB, startKey, endKey []byte) error {
 	batch := new(WriteBatch)
 	txn := db.NewTransaction(false)
@@ -102,6 +112,7 @@ func deleteRangeCF(txn *badger.Txn, batch *WriteBatch, cf string, startKey, endK
 	defer it.Close()
 }
 
+// 超过结束键
 func ExceedEndKey(current, endKey []byte) bool {
 	if len(endKey) == 0 {
 		return false

@@ -17,6 +17,7 @@ func TestEngineUtil(t *testing.T) {
 	db, err := badger.Open(opts)
 	require.Nil(t, err)
 
+	// 将这些更新原子的写入db
 	batch := new(WriteBatch)
 	batch.SetCF(CfDefault, []byte("a"), []byte("a1"))
 	batch.SetCF(CfDefault, []byte("b"), []byte("b1"))
@@ -32,9 +33,11 @@ func TestEngineUtil(t *testing.T) {
 	err = batch.WriteToDB(db)
 	require.Nil(t, err)
 
+	// 从db中获取
 	_, err = GetCF(db, CfDefault, []byte("e"))
 	require.Equal(t, err, badger.ErrKeyNotFound)
 
+	// 向db中写
 	err = PutCF(db, CfDefault, []byte("e"), []byte("e2"))
 	require.Nil(t, err)
 	val, _ := GetCF(db, CfDefault, []byte("e"))
