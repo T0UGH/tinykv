@@ -82,10 +82,7 @@ func (r *StandAloneReader) GetCF(cf string, key []byte) ([]byte, error) {
 
 // 这个方法肯定是要返回一个崭新的迭代器
 func (r *StandAloneReader) IterCF(cf string) engine_util.DBIterator {
-	return &engine_util.BadgerIterator{
-		Iter:   r.txn.NewIterator(badger.DefaultIteratorOptions),
-		Prefix: cf,
-	}
+	return engine_util.NewCFIterator(cf, r.txn)
 }
 
 // 关闭reader的时候要关闭事务，但是不用关闭iter，因为已经把iter传出去了

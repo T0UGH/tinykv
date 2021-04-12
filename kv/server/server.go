@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"github.com/Connor1996/badger"
 
 	"github.com/pingcap-incubator/tinykv/kv/coprocessor"
 	"github.com/pingcap-incubator/tinykv/kv/storage"
@@ -45,6 +46,13 @@ func (server *Server) RawGet(_ context.Context, req *kvrpcpb.RawGetRequest) (*kv
 	}
 
 	val, err := reader.GetCF(req.Cf, req.Key)
+
+	// 处理没有找到
+	if err == badger.ErrKeyNotFound {
+		return &kvrpcpb.RawGetResponse{
+			NotFound: true,
+		}, nil
+	}
 
 	resp := &kvrpcpb.RawGetResponse{
 		Value: val,
@@ -126,7 +134,7 @@ func (server *Server) RawScan(_ context.Context, req *kvrpcpb.RawScanRequest) (*
 			break
 		}
 	}
-
+	iter.Close()
 	return &kvrpcpb.RawScanResponse{Kvs: kvPairs}, nil
 }
 

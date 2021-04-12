@@ -1,6 +1,7 @@
 package server
 
 import (
+	"github.com/Connor1996/badger"
 	"os"
 	"testing"
 
@@ -196,7 +197,8 @@ func TestRawDelete1(t *testing.T) {
 	assert.Nil(t, err)
 
 	val, err := Get(s, cf, []byte{99})
-	assert.Equal(t, nil, err)
+	// 我觉得这块不合理，还是改成key not found
+	assert.Equal(t, badger.ErrKeyNotFound, err)
 	assert.Equal(t, []byte(nil), val)
 }
 
@@ -209,13 +211,14 @@ func TestRawScan1(t *testing.T) {
 	defer s.Stop()
 
 	cf := engine_util.CfDefault
-
+	// 连放5个
 	Set(s, cf, []byte{1}, []byte{233, 1})
 	Set(s, cf, []byte{2}, []byte{233, 2})
 	Set(s, cf, []byte{3}, []byte{233, 3})
 	Set(s, cf, []byte{4}, []byte{233, 4})
 	Set(s, cf, []byte{5}, []byte{233, 5})
 
+	// 取3个
 	req := &kvrpcpb.RawScanRequest{
 		StartKey: []byte{1},
 		Limit:    3,
@@ -225,6 +228,7 @@ func TestRawScan1(t *testing.T) {
 	resp, err := server.RawScan(nil, req)
 	assert.Nil(t, err)
 
+	// 确实返回3个
 	assert.Equal(t, 3, len(resp.Kvs))
 	expectedKeys := [][]byte{{1}, {2}, {3}}
 	for i, kv := range resp.Kvs {
