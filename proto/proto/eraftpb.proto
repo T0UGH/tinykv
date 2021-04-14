@@ -39,30 +39,43 @@ message Snapshot {
 // Some MessageType defined here are local messages which not come from the network, but should
 // also use the Step method to handle
 enum MessageType {
+    // 用来选举的本地消息。如果一个选举超时发生
+    // 节点应该通过它的step方法发送一个MsgHub消息，然后开启一个新的选举
     // 'MessageType_MsgHup' is a local message used for election. If an election timeout happened,
     // the node should pass 'MessageType_MsgHup' to its Step method and start a new election.
     MsgHup = 0;
+    // 本地消息，用来signals leader发送一个heartbeat给它的followers
     // 'MessageType_MsgBeat' is a local message that signals the leader to send a heartbeat
     // of the 'MessageType_MsgHeartbeat' type to its followers.
     MsgBeat = 1;
+    // 本地消息，建议将数据附加到leader的日志条目中。
     // 'MessageType_MsgPropose' is a local message that proposes to append data to the leader's log entries.
     MsgPropose = 2;
+    // 包含了需要复制的日志条目
     // 'MessageType_MsgAppend' contains log entries to replicate.
     MsgAppend = 3;
+    // 日志复制请求的回复
     // 'MessageType_MsgAppendResponse' is response to log replication request('MessageType_MsgAppend').
     MsgAppendResponse = 4;
+    // 请求投票
     // 'MessageType_MsgRequestVote' requests votes for election.
     MsgRequestVote = 5;
+    // 请求投票的回复
     // 'MessageType_MsgRequestVoteResponse' contains responses from voting request.
     MsgRequestVoteResponse = 6;
+    // 请求安装快照
     // 'MessageType_MsgSnapshot' requests to install a snapshot message.
     MsgSnapshot = 7;
+    // 从leader向它的followers发送心跳
     // 'MessageType_MsgHeartbeat' sends heartbeat from leader to its followers.
     MsgHeartbeat = 8;
+    // 心跳回复
     // 'MessageType_MsgHeartbeatResponse' is a response to 'MessageType_MsgHeartbeat'.
     MsgHeartbeatResponse = 9;
+    // 请求leader传递它的领导权
     // 'MessageType_MsgTransferLeader' requests the leader to transfer its leadership.
     MsgTransferLeader = 11;
+    // leader发送给一个target让它超时来开启一个新选举
     // 'MessageType_MsgTimeoutNow' send from the leader to the leadership transfer target, to let
     // the transfer target timeout immediately and start a new election.
     MsgTimeoutNow = 12;

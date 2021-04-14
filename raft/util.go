@@ -127,3 +127,13 @@ func IsResponseMsg(msgt pb.MessageType) bool {
 func isHardStateEqual(a, b pb.HardState) bool {
 	return a.Term == b.Term && a.Vote == b.Vote && a.Commit == b.Commit
 }
+
+func countVotes(votes map[uint64]bool) int {
+	count := 0
+	for _, vote := range votes {
+		if vote {
+			count++
+		}
+	}
+	return count
+}

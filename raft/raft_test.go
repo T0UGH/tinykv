@@ -48,6 +48,7 @@ type stateMachine interface {
 	readMessages() []pb.Message
 }
 
+// 然后r.msgs并且将其清空
 func (r *Raft) readMessages() []pb.Message {
 	msgs := r.msgs
 	r.msgs = make([]pb.Message, 0)
@@ -74,6 +75,7 @@ func TestProgressLeader2AB(t *testing.T) {
 
 func TestLeaderElection2AA(t *testing.T) {
 	var cfg func(*Config)
+	// 购进了几种网络情况，半数以上就能选举成功
 	tests := []struct {
 		*network
 		state   StateType
@@ -87,7 +89,9 @@ func TestLeaderElection2AA(t *testing.T) {
 	}
 
 	for i, tt := range tests {
+		// 给第二个peer发送一条内部选举消息，这条消息将启动整个系统
 		tt.send(pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgHup})
+		// 选中第二个peer作为test者，test它的一些内部状态
 		sm := tt.network.peers[1].(*Raft)
 		if sm.State != tt.state {
 			t.Errorf("#%d: state = %s, want %s", i, sm.State, tt.state)
@@ -370,7 +374,7 @@ func TestCommitWithHeartbeat2AB(t *testing.T) {
 	// network recovery
 	tt.recover()
 
-	// leader broadcast heartbeeat
+	// leader broadcast heartbeat
 	tt.send(pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgBeat})
 
 	if sm.RaftLog.committed != 3 {
@@ -1604,15 +1608,19 @@ func newNetworkWithConfig(configFunc func(*Config), peers ...stateMachine) *netw
 	}
 }
 
+// 使用网络发送消息，实际上就是调用to方的step方法
 func (nw *network) send(msgs ...pb.Message) {
 	for len(msgs) > 0 {
 		m := msgs[0]
 		p := nw.peers[m.To]
 		p.Step(m)
+		// 把从to方新读到的消息也放到msgs里面 -> 这些消息应该是raft协议产生的
+		// 所以这个for循环可能没完没了
 		msgs = append(msgs[1:], nw.filter(p.readMessages())...)
 	}
 }
 
+// 应该是扔掉消息
 func (nw *network) drop(from, to uint64, perc float64) {
 	nw.dropm[connem{from, to}] = perc
 }

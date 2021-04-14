@@ -38,31 +38,45 @@ var ErrUnavailable = errors.New("requested entry at index is unavailable")
 // snapshot is temporarily unavailable.
 var ErrSnapshotTemporarilyUnavailable = errors.New("snapshot is temporarily unavailable")
 
+// 光看接口的话，感觉Storage主要就是取很多持久化状态，但是它不提供存的功能，存应该也是通过Ready那一套来我猜
+// Storage 是一个可能被app实现的接口来从storage中取回(retrieve)log entries
 // Storage is an interface that may be implemented by the application
 // to retrieve log entries from storage.
 //
+// 如果任何Storage方法返回错误，则Raft实例将无法操作并拒绝参加选举；在这种情况下，应用程序负责清理和恢复。
 // If any Storage method returns an error, the raft instance will
 // become inoperable and refuse to participate in elections; the
 // application is responsible for cleanup and recovery in this case.
 type Storage interface {
+	// 初始化状态返回存储的HardState和ConfState信息
 	// InitialState returns the saved HardState and ConfState information.
 	InitialState() (pb.HardState, pb.ConfState, error)
+
+	// Entries返回[lo，hi)范围内的日志条目的那一部分日志。
 	// Entries returns a slice of log entries in the range [lo,hi).
 	// MaxSize limits the total size of the log entries returned, but
 	// Entries returns at least one entry if any.
 	Entries(lo, hi uint64) ([]pb.Entry, error)
+
+	// 返回entry i对应的Term号
 	// Term returns the term of entry i, which must be in the range
 	// [FirstIndex()-1, LastIndex()]. The term of the entry before
 	// FirstIndex is retained for matching purposes even though the
 	// rest of that entry may not be available.
 	Term(i uint64) (uint64, error)
+
+	// LastIndex返回日志中最后一个条目的索引。
 	// LastIndex returns the index of the last entry in the log.
 	LastIndex() (uint64, error)
+
+	// FirstIndex返回日志中第一个条目的索引，更老的已经被打包到SnapShot中了
 	// FirstIndex returns the index of the first log entry that is
 	// possibly available via Entries (older entries have been incorporated
 	// into the latest Snapshot; if storage only contains the dummy entry the
 	// first log entry is not available).
 	FirstIndex() (uint64, error)
+
+	// Snapshot返回最近的snapshot
 	// Snapshot returns the most recent snapshot.
 	// If snapshot is temporarily unavailable, it should return ErrSnapshotTemporarilyUnavailable,
 	// so raft state machine could know that Storage needs some time to prepare
