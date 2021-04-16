@@ -65,7 +65,10 @@ type RaftLog struct {
 // to the state that it just commits and applies the latest snapshot.
 func newLog(storage Storage) *RaftLog {
 	// Your Code Here (2A).
-	return nil
+	return &RaftLog{
+		storage: storage,
+		entries: make([]pb.Entry, 0),
+	}
 }
 
 // 我们需要在某些时间压缩日志条目，例如存储紧凑的稳定日志条目，以防止日志条目在内存中无限增长
@@ -90,9 +93,16 @@ func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 	return nil
 }
 
-// 返回log entires的最后一个索引
+// 返回i 之后的所有条目
+func (l *RaftLog) from(i uint64) (ents []*pb.Entry) {
+	// todo 待实现 // todo 需要考虑有一些term被存到disk的问题
+	return nil
+}
+
+// 返回log entries的最后一个索引
 // LastIndex return the last index of the log entries
 func (l *RaftLog) LastIndex() uint64 {
+	// todo 待实现
 	// Your Code Here (2A).
 	return 0
 }

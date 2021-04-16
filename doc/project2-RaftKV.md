@@ -70,7 +70,7 @@ You can run `make project2aa` to test the implementation and see some hints at t
 
 To implement log replication, you may want to start with handling `MsgAppend` and `MsgAppendResponse` on both the sender and receiver sides. Checkout `raft.RaftLog` in `raft/log.go` which is a helper struct that helps you manage the raft log, in here you also need to interact with the upper application by the `Storage` interface defined in `raft/storage.go` to get the persisted data like log entries and snapshot.
 
-> 要实现日志复制，您可能需要从处理发送方和接收方的`MsgAppend`和`MsgAppendResponse`开始。 Checkout `raft.RaftLog` in `raft/log.go` ，它是帮助你管理raft日志的辅助结构。在这里，您还需要通过`raft/Storage`中定义的存储接口与上层应用程序交互，来获取日志条目和快照等持久化数据。
+> 要实现日志复制，您可能需要从处理发送方和接收方的`MsgAppend`和`MsgAppendResponse`开始。 你可以查看`raft/log.go`中的`raft.RaftLog` ，它是帮助你管理raft日志的辅助结构。在这里，您还需要通过`raft/Storage`中定义的`Storage`接口与上层应用程序交互，来获取像日志条目和快照等已持久化的数据。
 
 You can run `make project2ab` to test the implementation and see some hints at the end of this part.
 

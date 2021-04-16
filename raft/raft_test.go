@@ -75,7 +75,7 @@ func TestProgressLeader2AB(t *testing.T) {
 
 func TestLeaderElection2AA(t *testing.T) {
 	var cfg func(*Config)
-	// 购进了几种网络情况，半数以上就能选举成功
+	// 构建了几种网络情况，半数以上就能选举成功
 	tests := []struct {
 		*network
 		state   StateType
@@ -105,17 +105,22 @@ func TestLeaderElection2AA(t *testing.T) {
 // testLeaderCycle verifies that each node in a cluster can campaign
 // and be elected in turn. This ensures that elections work when not
 // starting from a clean slate (as they do in TestLeaderElection)
+// testLeaderCycle验证集群中的每个节点都可以竞选并依次当选。
+// 这样可以确保在不从干净的开始时进行选举（如在TestLeaderElection中所做的那样）
 func TestLeaderCycle2AA(t *testing.T) {
 	var cfg func(*Config)
 	n := newNetworkWithConfig(cfg, nil, nil, nil)
+	// 循环三遍，相当于给每个人一个当Leader的机会
 	for campaignerID := uint64(1); campaignerID <= 3; campaignerID++ {
 		n.send(pb.Message{From: campaignerID, To: campaignerID, MsgType: pb.MessageType_MsgHup})
 
 		for _, peer := range n.peers {
 			sm := peer.(*Raft)
+			// 如果是campaigner 就检查是不是leader
 			if sm.id == campaignerID && sm.State != StateLeader {
 				t.Errorf("campaigning node %d state = %v, want StateLeader",
 					sm.id, sm.State)
+				// 不然就检查是不是follower
 			} else if sm.id != campaignerID && sm.State != StateFollower {
 				t.Errorf("after campaign of node %d, "+
 					"node %d had state = %v, want StateFollower",
@@ -622,6 +627,7 @@ func TestHandleMessageType_MsgAppend2AB(t *testing.T) {
 	}
 }
 
+// todo: 做完2AB再执行这个TEST, 2AA还没有对Log做任何操作
 func TestRecvMessageType_MsgRequestVote2AA(t *testing.T) {
 	msgType := pb.MessageType_MsgRequestVote
 	msgRespType := pb.MessageType_MsgRequestVoteResponse
@@ -759,6 +765,7 @@ func TestCandidateResetTermMessageType_MsgHeartbeat2AA(t *testing.T) {
 	testCandidateResetTerm(t, pb.MessageType_MsgHeartbeat)
 }
 
+// todo: 2AA还不具备MsgAppend 等2AB再跑这个测试
 func TestCandidateResetTermMessageType_MsgAppend2AA(t *testing.T) {
 	testCandidateResetTerm(t, pb.MessageType_MsgAppend)
 }
@@ -1452,6 +1459,7 @@ func TestTransferNonMember3A(t *testing.T) {
 
 // TestSplitVote verifies that after split vote, cluster can complete
 // election in next round.
+// TestSplitVote 验证在一次split vote之后, 集群可以在下一轮完成选举
 func TestSplitVote2AA(t *testing.T) {
 	n1 := newTestRaft(1, []uint64{1, 2, 3}, 10, 1, NewMemoryStorage())
 	n2 := newTestRaft(2, []uint64{1, 2, 3}, 10, 1, NewMemoryStorage())
@@ -1464,6 +1472,7 @@ func TestSplitVote2AA(t *testing.T) {
 	nt := newNetwork(n1, n2, n3)
 	nt.send(pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgHup})
 
+	// 模拟leader掉线, follower开始split vote
 	// simulate leader down. followers start split vote.
 	nt.isolate(1)
 	nt.send([]pb.Message{
@@ -1471,6 +1480,7 @@ func TestSplitVote2AA(t *testing.T) {
 		{From: 3, To: 3, MsgType: pb.MessageType_MsgHup},
 	}...)
 
+	// 验证term的值是否符合期待
 	// check whether the term values are expected
 	// n2.Term == 3
 	// n3.Term == 3

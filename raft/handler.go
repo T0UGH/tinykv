@@ -114,7 +114,12 @@ func (h *MsgHupHandler) Handle(m pb.Message) error {
 	// 1 变成Candidate
 	// todo 此处可能需要更改更多状态字段, 需要注意一下
 	h.raft.becomeCandidate()
-	// 2 BroadCash来让其他人给他投票
+	// 2 先count一遍，处理singleNode的情况
+	count := countVotes(h.raft.votes)
+	if count >= len(h.raft.peers)/2+1 {
+		h.raft.becomeLeader()
+	}
+	// 3 BroadCast来让其他人给他投票
 	h.raft.broadCastMsg(pb.Message{
 		MsgType: pb.MessageType_MsgRequestVote,
 		Term:    h.raft.Term,
@@ -150,7 +155,7 @@ func (h *MsgRequestVoteHandler) Handle(m pb.Message) error {
 	// case 2: 中
 	if m.GetTerm() == h.raft.Term {
 		eqMsg := template
-		eqMsg.Reject = h.raft.Vote == m.GetFrom()
+		eqMsg.Reject = h.raft.Vote != m.GetFrom()
 		h.raft.addMsg(eqMsg)
 		return nil
 	}
@@ -173,8 +178,8 @@ type CandidateMsgRequestVoteResponseHandler struct {
 	raft *Raft
 }
 
-func NewCandidateMsgRequestVoteResponseHandler(raft *Raft) *MsgRequestVoteHandler {
-	return &MsgRequestVoteHandler{raft: raft}
+func NewCandidateMsgRequestVoteResponseHandler(raft *Raft) *CandidateMsgRequestVoteResponseHandler {
+	return &CandidateMsgRequestVoteResponseHandler{raft: raft}
 }
 
 func (h *CandidateMsgRequestVoteResponseHandler) Handle(m pb.Message) error {
@@ -185,6 +190,47 @@ func (h *CandidateMsgRequestVoteResponseHandler) Handle(m pb.Message) error {
 	if count >= len(h.raft.peers)/2+1 {
 		h.raft.becomeLeader()
 	}
+	return nil
+}
+
+// Follower处理Propose消息
+type FollowerMsgProposeHandler struct {
+	raft *Raft
+}
+
+func NewFollowerMsgProposeHandler(raft *Raft) *FollowerMsgProposeHandler {
+	return &FollowerMsgProposeHandler{raft: raft}
+}
+
+// 如果有lead就转发给lead, 否则丢弃
+// todo: 丢弃的时候用不用干点啥通知上游
+func (h *FollowerMsgProposeHandler) Handle(m pb.Message) error {
+	if h.raft.Lead != None {
+		m.To = h.raft.Lead
+		h.raft.addMsg(m)
+	}
+	return nil
+}
+
+// Leader处理Propose消息
+type LeaderMsgProposeHandler struct {
+	raft *Raft
+}
+
+func NewLeaderMsgProposeHandler(raft *Raft) *LeaderMsgProposeHandler {
+	return &LeaderMsgProposeHandler{raft: raft}
+}
+
+// 当将`MessageType_MsgPropose`传递给领导者的`Step`方法时，
+// 领导者首先调用`appendEntry`方法以将条目追加到其日志中，
+// 然后调用`bcastAppend`方法将这些条目发送给其所有对等方。
+func (h *LeaderMsgProposeHandler) Handle(m pb.Message) error {
+	h.raft.addEntries(m)
+	// todo 为什么要在这里bcastAppend, 在这里bcastAppend都需要干什么
+	// todo 也就是说每次发生propose事件才会引发AppendEntries
+	// todo 这是否合理, 应该还算合理, 因为也只有这个时候leader发生了日志的变动，它需要把日志的变动告诉大家
+	// todo 但是有个很牛逼的地方: 这样会不会频率太过小了, 因为有的节点可能不吃这个内容
+	h.raft.broadCastAppend()
 	return nil
 }
 

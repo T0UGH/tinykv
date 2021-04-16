@@ -143,15 +143,15 @@ The total state machine handling loop will look something like this:
     case <-s.Ticker:
       n.Tick()
     case rd := <-s.Node.Ready():
-        // 保存到硬盘
+      // 保存到硬盘
       saveToStorage(rd.State, rd.Entries, rd.Snapshot)
-        // 发送消息
+      // 发送消息
       send(rd.Messages)
-        //创建snapshot
+      //创建snapshot
       if !raft.IsEmptySnap(rd.Snapshot) {
         processSnapshot(rd.Snapshot)
       }
-        //保存entries
+      // 应用entries到app里的状态机
       for _, entry := range rd.CommittedEntries {
         process(entry)
         if entry.Type == eraftpb.EntryType_EntryConfChange {
@@ -160,7 +160,7 @@ The total state machine handling loop will look something like this:
           s.Node.ApplyConfChange(cc)
         }
       }
-        //继续
+      // 继续
       s.Node.Advance()
     case <-s.done:
       return
@@ -249,12 +249,8 @@ Package raft sends and receives message in Protocol Buffer format (defined in er
 
 > `MessageType_MsgBeat`是一种内部消息，用于通知发送`MessageType_MsgHeartbeat`类型的心跳。
 > 如果节点是领导者，则将"raft"结构中的`tick`方法设置为`tickHeartbeat`，并触发领导者向其关注者定期发送`MessageType_MsgHeartbeat`消息。
->
-> 没找到在哪用了这个消息
 
-'MessageType_MsgPropose' proposes to append data to its log entries. This is a special type to redirect proposals to the leader. Therefore, send method overwrites eraftpb.Message's term with its HardState's term to avoid attaching its
-local term to 'MessageType_MsgPropose'. When 'MessageType_MsgPropose' is passed to the leader's 'Step' method, the leader first calls the 'appendEntry' method to append entries to its log, and then calls 'bcastAppend' method to send those entries to its peers. When passed to candidate, 'MessageType_MsgPropose' is dropped. When passed to
-follower, 'MessageType_MsgPropose' is stored in follower's mailbox(msgs) by the send method. It is stored with sender's ID and later forwarded to the leader by rafthttp package.
+`MessageType_MsgPropose` proposes to append data to its log entries. This is a special type to redirect proposals to the leader. Therefore, `send` method overwrites `eraftpb.Message`'s term with its `HardState`'s term to avoid attaching its local term to `MessageType_MsgPropose`. When `MessageType_MsgPropose` is passed to the leader's `Step` method, the leader first calls the `appendEntry` method to append entries to its log, and then calls `bcastAppend` method to send those entries to its peers. When passed to candidate, `MessageType_MsgPropose` is dropped. When passed to follower, `MessageType_MsgPropose` is stored in follower's mailbox(msgs) by the send method. It is stored with sender's ID and later forwarded to the leader by rafthttp package.
 
 > `MessageType_MsgPropose`建议将数据附加到其日志条目。 这是一种特殊类型，用于**将提案重定向到领导者**。 因此，`send`方法将用它`HardState`中的`term`覆盖`eraftpb.Message`的`term`，以避免附加其
 > `MessageType_MsgPropose`的本地术语。 当将`MessageType_MsgPropose`传递给领导者的`Step`方法时，领导者首先调用`appendEntry`方法以将条目追加到其日志中，然后调用`bcastAppend`方法将这些条目发送给其所有对等方。 当传递给candidate时, `MessageType_MsgPropose`会被丢弃。当发送给`follower`时，这个消息被存储在follower的邮箱中，并且一会儿转发给`leader`

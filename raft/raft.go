@@ -236,6 +236,7 @@ func newRaft(c *Config) *Raft {
 	raft.electionTimeoutBaseline = c.ElectionTick
 	raft.electionElapsed = 0
 	raft.heartbeatElapsed = 0
+	raft.RaftLog = newLog(c.Storage)
 	return raft
 }
 
@@ -245,7 +246,16 @@ func newRaft(c *Config) *Raft {
 // 如果消息发送成功就return true
 func (r *Raft) sendAppend(to uint64) bool {
 	// Your Code Here (2A).
-	return false
+	msg := pb.Message{
+		MsgType: pb.MessageType_MsgAppend,
+		To:      to,
+		Term:    r.Term,
+		From:    r.id,
+	}
+	entries := r.RaftLog.from(r.Prs[to].Next)
+	msg.Entries = entries
+	r.addMsg(msg)
+	return true
 }
 
 // sendHeartbeat sends a heartbeat RPC to the given peer.
@@ -271,6 +281,8 @@ func (r *Raft) becomeFollower(term uint64, lead uint64) {
 	r.Term = term
 	r.Lead = lead
 	r.resetElectionClock()
+	// 清空进度
+	r.Prs = make(map[uint64]*Progress)
 }
 
 // becomeCandidate transform this peer's state to candidate
@@ -289,6 +301,8 @@ func (r *Raft) becomeCandidate() {
 	// 4 重设Election时钟 todo 问题: 所有becomeCandidate调用都需要重设Election时钟吗? 需要
 	// todo 此外 收到心跳的时候也要resetElectionCLock 此外外 becomeFollower时也需要重置Election时钟
 	r.resetElectionClock()
+	// 清空进度
+	r.Prs = make(map[uint64]*Progress)
 }
 
 // becomeLeader将节点的状态改为Leader
@@ -297,13 +311,20 @@ func (r *Raft) becomeLeader() {
 	// Your Code Here (2A).
 	// todo 注意: Leader应该发送一个no op entry在它的任期中
 	// NOTE: Leader should propose a noop entry on its term
-	// todo: 得写这个啊
 	// 1 先切换个状态
 	r.State = StateLeader
 	// 2 重置HeartBeat时钟
 	r.resetHeartBeatClock()
 	// 3 自己就是Lead
 	r.Lead = r.id
+	// 4 初始化Prs
+	r.Prs = make(map[uint64]*Progress)
+	for _, id := range r.peers {
+		r.Prs[id] = &Progress{
+			Match: 0,
+			Next:  r.RaftLog.LastIndex(),
+		}
+	}
 }
 
 // 给上层应用和test提供的处理消息的入口, 需要根据消息类型的不同来调用不同的函数来处理
@@ -346,12 +367,33 @@ func (r *Raft) addMsg(m pb.Message) {
 	r.msgs = append(r.msgs, m)
 }
 
+func (r *Raft) addEntries(m pb.Message) {
+	for _, v := range m.GetEntries() {
+		r.RaftLog.entries = append(r.RaftLog.entries, *v)
+	}
+}
+
 // 将传过来的Message的to改成所有msg并发送其他不变
 func (r *Raft) broadCastMsg(m pb.Message) {
 	for _, v := range r.peers {
+		// 给除了自己之外的人发
+		if v == r.id {
+			continue
+		}
 		currMsg := m
 		currMsg.To = v
 		r.addMsg(currMsg)
+	}
+}
+
+// leader广播AppendEntries, 发给所有它该同步的peers
+func (r *Raft) broadCastAppend() {
+	for _, v := range r.peers {
+		// 给除了自己之外的人发
+		if v == r.id {
+			continue
+		}
+		r.sendAppend(v)
 	}
 }
 
