@@ -36,7 +36,7 @@ type RaftLog struct {
 	// stable storage on a quorum of nodes.
 	committed uint64
 
-	// 论文中的applied
+	// 论文中的applied 已提交的就可以找时间apply
 	// applied is the highest log position that the application has
 	// been instructed to apply to its state machine.
 	// Invariant: applied <= committed
@@ -65,9 +65,13 @@ type RaftLog struct {
 // to the state that it just commits and applies the latest snapshot.
 func newLog(storage Storage) *RaftLog {
 	// Your Code Here (2A).
+	// todo: 2AC真正使用Storage的时候要改这里
 	return &RaftLog{
-		storage: storage,
-		entries: make([]pb.Entry, 0),
+		storage:   storage,
+		entries:   make([]pb.Entry, 0),
+		applied:   0,
+		committed: 0,
+		stabled:   0,
 	}
 }
 
@@ -83,45 +87,68 @@ func (l *RaftLog) maybeCompact() {
 // unstableEntries return all the unstable entries
 func (l *RaftLog) unstableEntries() []pb.Entry {
 	// Your Code Here (2A).
-
-	return nil
+	return l.entries
 }
 
 // 返回所有提交了但是还没applied的entries
 // nextEnts returns all the committed but not applied entries
-func (l *RaftLog) nextEnts() (ents []pb.Entry) {
+func (l *RaftLog) nextEnts() []pb.Entry {
 	// Your Code Here (2A).
-	return nil
+	return l.entries[l.applied:l.committed]
 }
 
-// 返回i 之后的所有条目
-func (l *RaftLog) from(i uint64) (ents []*pb.Entry) {
-	// todo 待实现 // todo 需要考虑有一些term被存到disk的问题
-	return nil
+// 返回i之后的所有条目
+func (l *RaftLog) From(i uint64) ([]pb.Entry, error) {
+	// 0 先判断i是否合法 -> 越界了
+	if int(i-l.stabled) > len(l.entries) {
+		return make([]pb.Entry, 0), ErrUnavailable
+	}
+	// 1 全都在Log里
+	if i > l.stabled {
+		return l.entries[i-l.stabled-1:], nil
+	}
+	// 2 一部分在Storage中, 还有一部分在log中
+	part1, err := l.storage.Entries(i, l.stabled+1)
+	if err != nil {
+		return make([]pb.Entry, 0), err
+	}
+	return append(part1, l.entries...), nil
 }
 
+// 啥都没有的时候一般会返回0
 // 返回log entries的最后一个索引
 // LastIndex return the last index of the log entries
 func (l *RaftLog) LastIndex() uint64 {
-	// todo 实现它
 	// Your Code Here (2A).
-	return 0
+	return l.stabled + uint64(len(l.entries))
 }
 
 // 返回entry i的term
 // Term return the term of the entry in the given index
 func (l *RaftLog) Term(i uint64) (uint64, error) {
-	// todo 实现它 // todo 需要考虑有一些term被存到disk的问题
 	// Your Code Here (2A).
-	return 0, nil
+	// 先处理一种特殊情况
+	if i == 0 {
+		return 0, nil
+	}
+
+	if i <= l.stabled {
+		return l.storage.Term(i)
+	}
+
+	if int(i-l.stabled) > len(l.entries) {
+		return 0, ErrUnavailable
+	}
+
+	return l.entries[i-l.stabled-1].Term, nil
 }
 
-func (l *RaftLog) UpdateEntries(index uint64, entries []*pb.Entry) {
-	if index <= -1 {
-		l.entries = append(l.entries[:0], ConvertEntrySlice(entries)...)
-	} else {
-		l.entries = append(l.entries[:index+1], ConvertEntrySlice(entries)...)
-	}
+func (l *RaftLog) UpdateEntries(lastIndex uint64, entries []*pb.Entry) {
+	l.entries = append(l.entries[:lastIndex], ConvertEntrySlice(entries)...)
+}
+
+func (l *RaftLog) AddEntries(m pb.Message) {
+	l.entries = append(l.entries, ConvertEntrySlice(m.Entries)...)
 }
 
 func (l *RaftLog) UpdateCommit(commit uint64) {

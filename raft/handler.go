@@ -119,10 +119,14 @@ func (h *MsgHupHandler) Handle(m pb.Message) error {
 	if count >= len(h.raft.peers)/2+1 {
 		h.raft.becomeLeader()
 	}
+	lastIndex := h.raft.RaftLog.LastIndex()
+	lastTerm, _ := h.raft.RaftLog.Term(lastIndex)
 	// 3 BroadCast来让其他人给他投票
 	h.raft.broadCastMsg(pb.Message{
 		MsgType: pb.MessageType_MsgRequestVote,
 		Term:    h.raft.Term,
+		Index:   lastIndex,
+		LogTerm: lastTerm,
 	})
 	return nil
 }
@@ -138,7 +142,7 @@ func NewMsgRequestVoteHandler(raft *Raft) *MsgRequestVoteHandler {
 // RequestVote先用一个处理函数吧, 太相似了
 func (h *MsgRequestVoteHandler) Handle(m pb.Message) error {
 
-	template := pb.Message{
+	reply := pb.Message{
 		MsgType: pb.MessageType_MsgRequestVoteResponse,
 		To:      m.GetFrom(),
 		Term:    h.raft.Term,
@@ -146,22 +150,29 @@ func (h *MsgRequestVoteHandler) Handle(m pb.Message) error {
 
 	// case 1: 旧
 	if m.GetTerm() < h.raft.Term {
-		oldMsg := template
-		oldMsg.Reject = true
-		h.raft.addMsg(oldMsg)
+		reply.Reject = true
+		h.raft.addMsg(reply)
 		return nil
 	}
 
-	// case 2: 中
+	// case 2: 一样大
 	if m.GetTerm() == h.raft.Term {
-		eqMsg := template
-		eqMsg.Reject = h.raft.Vote != m.GetFrom()
-		h.raft.addMsg(eqMsg)
+		reply.Reject = h.raft.Vote != m.GetFrom()
+		h.raft.addMsg(reply)
 		return nil
 	}
 
-	// case 3: 新
-	newMsg := template
+	// case 3: 比较谁的日志新 -> 我新
+	lastIndex := h.raft.RaftLog.LastIndex()
+	lastTerm, _ := h.raft.RaftLog.Term(lastIndex)
+	if m.GetLogTerm() < lastTerm || (m.GetLogTerm() == lastTerm && m.GetIndex() < lastIndex) {
+		reply.Reject = true
+		h.raft.addMsg(reply)
+		return nil
+	}
+
+	// case 4: 比较谁的日志新 -> 我旧
+	newMsg := reply
 	newMsg.Reject = false
 	h.raft.Term = m.GetTerm()
 	newMsg.Term = m.GetTerm()
@@ -225,11 +236,17 @@ func NewLeaderMsgProposeHandler(raft *Raft) *LeaderMsgProposeHandler {
 // 领导者首先调用`appendEntry`方法以将条目追加到其日志中，
 // 然后调用`bcastAppend`方法将这些条目发送给其所有对等方。
 func (h *LeaderMsgProposeHandler) Handle(m pb.Message) error {
-	h.raft.addEntries(m)
-	// todo 为什么要在这里bcastAppend, 在这里bcastAppend都需要干什么
-	// todo 也就是说每次发生propose事件才会引发AppendEntries
-	// todo 这是否合理, 应该还算合理, 因为也只有这个时候leader发生了日志的变动，它需要把日志的变动告诉大家
-	// todo 但是有个很牛逼的地方: 这样会不会频率太过小了, 因为有的节点可能不吃这个内容
+
+	// 先给entries添加一些额外信息
+	for _, e := range m.Entries {
+		e.Term = h.raft.Term
+		e.Index = h.raft.RaftLog.LastIndex() + 1
+	}
+
+	// 添加到log中
+	h.raft.RaftLog.AddEntries(m)
+
+	// 广播
 	h.raft.broadCastAppend()
 	return nil
 }
@@ -254,11 +271,9 @@ func (h *MsgAppendHandler) Handle(m pb.Message) error {
 		return nil
 	}
 
-	// 2 prevLog没有怎么处理
-	lastIndex := h.raft.RaftLog.LastIndex()
-	lastTerm, _ := h.raft.RaftLog.Term(h.raft.RaftLog.LastIndex())
-	noPrevLog := m.GetIndex() > lastIndex || m.GetTerm() != None && m.GetTerm() != lastTerm
-	if noPrevLog {
+	// 2 先判断有没有上一条日志
+	lastTerm, err := h.raft.RaftLog.Term(m.Index)
+	if err == ErrUnavailable || lastTerm != m.LogTerm {
 		h.raft.addMsg(reply)
 		return nil
 	}

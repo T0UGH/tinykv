@@ -168,7 +168,11 @@ raft本身不负责直接发送rpc消息，也不负责直接写到持久化，�
 
 In this part, you will build a fault-tolerant key-value storage service using the Raft module implemented in part A.  Your key/value service will be a replicated state machine, consisting of several key/value servers that use Raft for replication. Your key/value service should continue to process client requests as long as a majority of the servers are alive and can communicate, despite other failures or network partitions.
 
+> 在本部分中，您将使用a部分中实现的Raft模块构建一个容错的键值存储服务。你的键/值服务将是一个复制的状态机，由几个使用Raft进行复制的键/值服务器组成。只要大多数服务器都是活的并且可以通信，您的key/value服务应该继续处理客户端请求，不管其他故障或网络分区。
+
 In project1 you have implemented a standalone kv server, so you should already be familiar with the kv server API and `Storage` interface.  
+
+> 在project1中，您已经实现了一个独立的kv服务器，因此您应该已经熟悉了kv服务器API和`Storage`接口。
 
 Before introducing the code, you need to understand three terms first: `Store`, `Peer` and `Region` which are defined in `proto/proto/metapb.proto`.
 
@@ -301,7 +305,11 @@ In this stage, you may consider these errors, and others will be processed in pr
 
 As things stand now with your code, it's not practical for a long-running server to remember the complete Raft log forever. Instead, the server will check the number of Raft log, and discard log entries exceeding the threshold from time to time.
 
+> 从现在代码的情况来看，让一个长时间运行的服务器永远记住完整的Raft日志是不现实的。相反，服务器将检查raft日志的数量，并不时丢弃超过阈值的日志条目。
+
 In this part, you will implement the Snapshot handling based on the above two part implementation. Generally, Snapshot is just a raft message like AppendEntries used to replicate data to followers, what makes it different is its size, Snapshot contains the whole state machine data at some point of time, and to build and send such a big message at once will consume many resource and time, which may block the handling of other raft messages, to amortize this problem, Snapshot message will use an independent connect, and split the data into chunks to transport. That’s the reason why there is a snapshot RPC API for TinyKV service. If you are interested in the detail of sending and receiving, check `snapRunner` and the reference <https://pingcap.com/blog-cn/tikv-source-code-reading-10/>
+
+> 在本部分中，您将基于上述两部分实现实现快照处理。
 
 ### The Code
 

@@ -252,9 +252,9 @@ func (r *Raft) sendAppend(to uint64) bool {
 		Term:    r.Term,
 		From:    r.id,
 	}
-	entries := r.RaftLog.from(r.Prs[to].Next)
-	msg.Entries = entries
-	msg.Index = r.RaftLog.LastIndex()
+	entries, _ := r.RaftLog.From(r.Prs[to].Next)
+	msg.Entries = ConvertEntryPointerSlice(entries)
+	msg.Index = r.Prs[to].Next - 1
 	msg.LogTerm, _ = r.RaftLog.Term(msg.Index)
 	msg.Commit = r.RaftLog.committed
 	r.addMsg(msg)
@@ -325,7 +325,7 @@ func (r *Raft) becomeLeader() {
 	for _, id := range r.peers {
 		r.Prs[id] = &Progress{
 			Match: 0,
-			Next:  r.RaftLog.LastIndex(),
+			Next:  r.RaftLog.LastIndex() + 1,
 		}
 	}
 }
@@ -341,6 +341,7 @@ func (r *Raft) Step(m pb.Message) error {
 // handleAppendEntries handle AppendEntries RPC request
 func (r *Raft) handleAppendEntries(m pb.Message) {
 	// Your Code Here (2A).
+	r.roleMap[r.State].Handle(m)
 }
 
 // 处理Heartbeat RPC 请求
@@ -368,12 +369,6 @@ func (r *Raft) removeNode(id uint64) {
 func (r *Raft) addMsg(m pb.Message) {
 	m.From = r.id
 	r.msgs = append(r.msgs, m)
-}
-
-func (r *Raft) addEntries(m pb.Message) {
-	for _, v := range m.GetEntries() {
-		r.RaftLog.entries = append(r.RaftLog.entries, *v)
-	}
 }
 
 // 将传过来的Message的to改成所有msg并发送其他不变

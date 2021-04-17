@@ -101,6 +101,7 @@ type MemoryStorage struct {
 // NewMemoryStorage creates an empty MemoryStorage.
 func NewMemoryStorage() *MemoryStorage {
 	return &MemoryStorage{
+		// 从头开始时，在列表中填充一个term是0的dummy条目
 		// When starting from scratch populate the list with a dummy entry at term zero.
 		ents:     make([]pb.Entry, 1),
 		snapshot: pb.Snapshot{Metadata: &pb.SnapshotMetadata{ConfState: &pb.ConfState{}}},
@@ -161,6 +162,7 @@ func (ms *MemoryStorage) LastIndex() (uint64, error) {
 	return ms.lastIndex(), nil
 }
 
+// 没有元素的时候将返回0
 func (ms *MemoryStorage) lastIndex() uint64 {
 	return ms.ents[0].Index + uint64(len(ms.ents)) - 1
 }
@@ -172,6 +174,7 @@ func (ms *MemoryStorage) FirstIndex() (uint64, error) {
 	return ms.firstIndex(), nil
 }
 
+// 没有元素的时候将返回1
 func (ms *MemoryStorage) firstIndex() uint64 {
 	return ms.ents[0].Index + 1
 }

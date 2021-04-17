@@ -32,6 +32,7 @@ func newMemoryStorageWithEnts(ents []pb.Entry) *MemoryStorage {
 	}
 }
 
+//
 // nextEnts returns the appliable entries and updates the applied index
 func nextEnts(r *Raft, s *MemoryStorage) (ents []pb.Entry) {
 	// Transfer all unstable entries to "stable" storage.
@@ -56,6 +57,14 @@ func (r *Raft) readMessages() []pb.Message {
 	return msgs
 }
 
+func TestFake(t *testing.T) {
+	//r := newTestRaft(1, []uint64{1, 2}, 5, 1, NewMemoryStorage())
+	//r.becomeCandidate()
+	s := NewMemoryStorage()
+	s.Append([]pb.Entry{{Data: []byte("foo"), Term: 1, Index: 1}})
+	t.Logf("123")
+}
+
 func TestProgressLeader2AB(t *testing.T) {
 	r := newTestRaft(1, []uint64{1, 2}, 5, 1, NewMemoryStorage())
 	r.becomeCandidate()
@@ -64,6 +73,7 @@ func TestProgressLeader2AB(t *testing.T) {
 	// Send proposals to r1. The first 5 entries should be appended to the log.
 	propMsg := pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgPropose, Entries: []*pb.Entry{{Data: []byte("foo")}}}
 	for i := 0; i < 5; i++ {
+		t.Logf("curr %d", i)
 		if pr := r.Prs[r.id]; pr.Match != uint64(i+1) || pr.Next != pr.Match+1 {
 			t.Errorf("unexpected progress %v", pr)
 		}

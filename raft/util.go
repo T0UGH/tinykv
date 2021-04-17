@@ -138,6 +138,14 @@ func countVotes(votes map[uint64]bool) int {
 	return count
 }
 
+func ConvertEntryPointerSlice(es []pb.Entry) []*pb.Entry {
+	ps := make([]*pb.Entry, 0)
+	for _, e := range es {
+		ps = append(ps, &e)
+	}
+	return ps
+}
+
 func ConvertEntrySlice(ps []*pb.Entry) []pb.Entry {
 	es := make([]pb.Entry, 0)
 	for _, p := range ps {
