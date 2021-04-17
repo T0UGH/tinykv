@@ -29,6 +29,8 @@ func NewLeaderRole(raft *Raft) *LeaderRole {
 	handlerMap[pb.MessageType_MsgHeartbeat] = NewLeaderMsgHeartbeatHandler(raft)
 	handlerMap[pb.MessageType_MsgHeartbeatResponse] = NewNoopHandler()
 	handlerMap[pb.MessageType_MsgPropose] = NewLeaderMsgProposeHandler(raft)
+	handlerMap[pb.MessageType_MsgAppend] = NewMsgAppendHandler(raft)
+	handlerMap[pb.MessageType_MsgAppendResponse] = NewMsgAppendResponseHandler(raft)
 	return &LeaderRole{
 		raft:       raft,
 		handlerMap: handlerMap,
@@ -62,6 +64,8 @@ func NewCandidateRole(raft *Raft) *CandidateRole {
 	handlerMap[pb.MessageType_MsgHeartbeat] = NewCandidateMsgHeartbeatHandler(raft)
 	handlerMap[pb.MessageType_MsgHeartbeatResponse] = NewNoopHandler()
 	handlerMap[pb.MessageType_MsgPropose] = NewNoopHandler()
+	handlerMap[pb.MessageType_MsgAppend] = NewMsgAppendHandler(raft)
+	handlerMap[pb.MessageType_MsgAppendResponse] = NewNoopHandler()
 	return &CandidateRole{
 		raft:       raft,
 		handlerMap: handlerMap,
@@ -95,6 +99,8 @@ func NewFollowerRole(raft *Raft) *FollowerRole {
 	handlerMap[pb.MessageType_MsgHeartbeat] = NewFollowerMsgHeartbeatHandler(raft)
 	handlerMap[pb.MessageType_MsgHeartbeatResponse] = NewNoopHandler()
 	handlerMap[pb.MessageType_MsgPropose] = NewFollowerMsgProposeHandler(raft)
+	handlerMap[pb.MessageType_MsgAppend] = NewMsgAppendHandler(raft)
+	handlerMap[pb.MessageType_MsgAppendResponse] = NewNoopHandler()
 	return &FollowerRole{
 		handlerMap: handlerMap,
 		raft:       raft,

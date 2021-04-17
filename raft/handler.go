@@ -234,6 +234,79 @@ func (h *LeaderMsgProposeHandler) Handle(m pb.Message) error {
 	return nil
 }
 
+type MsgAppendHandler struct {
+	raft *Raft
+}
+
+// 处理appendEntries消息
+func (h *MsgAppendHandler) Handle(m pb.Message) error {
+
+	reply := pb.Message{
+		MsgType: pb.MessageType_MsgAppendResponse,
+		To:      m.GetFrom(),
+		Term:    h.raft.Term,
+		Reject:  true,
+	}
+
+	// 1 如果term比自己还老，说明这个是个老领导，老领导的AppendEntries就不用管了，直接返回false
+	if m.GetTerm() < h.raft.Term {
+		h.raft.addMsg(reply)
+		return nil
+	}
+
+	// 2 prevLog没有怎么处理
+	lastIndex := h.raft.RaftLog.LastIndex()
+	lastTerm, _ := h.raft.RaftLog.Term(h.raft.RaftLog.LastIndex())
+	noPrevLog := m.GetIndex() > lastIndex || m.GetTerm() != None && m.GetTerm() != lastTerm
+	if noPrevLog {
+		h.raft.addMsg(reply)
+		return nil
+	}
+
+	// 3
+	h.raft.RaftLog.UpdateEntries(m.GetIndex(), m.GetEntries())
+
+	// 4 如果我是leader，并且还收到了一个至少termNumber跟我一样新的AppendEntries，就说明我是老leader，则设置我不是leader了
+	// 即便我是follower也在这里调用一下来更新状态
+	h.raft.becomeFollower(m.GetTerm(), m.GetFrom())
+
+	// 5 更新commitIndex
+	h.raft.RaftLog.UpdateCommit(m.Commit)
+
+	reply.Term = h.raft.Term
+	reply.Reject = false
+	reply.Index = h.raft.RaftLog.LastIndex()
+	h.raft.addMsg(reply)
+	return nil
+}
+
+func NewMsgAppendHandler(raft *Raft) *MsgAppendHandler {
+	return &MsgAppendHandler{raft: raft}
+}
+
+type MsgAppendResponseHandler struct {
+	raft *Raft
+}
+
+func NewMsgAppendResponseHandler(raft *Raft) *MsgAppendResponseHandler {
+	return &MsgAppendResponseHandler{raft: raft}
+}
+
+func (h *MsgAppendResponseHandler) Handle(m pb.Message) error {
+	// 1 如果 reject了 就把Next-1然后再发一遍
+	if m.GetReject() == true {
+		h.raft.Prs[m.GetFrom()].Next--
+		h.raft.sendAppend(m.GetFrom())
+	}
+	// 2 如果没有reject 就更新matchIndex然后, 重算commitIndex
+	// 问: 没有reject如何更新matchIndex? 我需要知道一些信息, 比如当前进行到了哪里，然后用这个信息来更新
+	h.raft.Prs[m.GetFrom()].Match = m.GetIndex()
+	matches := ExtractProgressForMatches(h.raft.Prs)
+	commit := CalcCommit(matches)
+	h.raft.RaftLog.UpdateCommit(commit)
+	return nil
+}
+
 // 不做任何操作的一个Handler
 type NoopHandler struct{}
 

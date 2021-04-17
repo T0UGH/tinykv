@@ -254,13 +254,16 @@ func (r *Raft) sendAppend(to uint64) bool {
 	}
 	entries := r.RaftLog.from(r.Prs[to].Next)
 	msg.Entries = entries
+	msg.Index = r.RaftLog.LastIndex()
+	msg.LogTerm, _ = r.RaftLog.Term(msg.Index)
+	msg.Commit = r.RaftLog.committed
 	r.addMsg(msg)
 	return true
 }
 
 // sendHeartbeat sends a heartbeat RPC to the given peer.
 // 给对等体发送heartbeat RPC
-// todo 这个没用我感觉 先注释了
+// todo 这个方法我感觉没用先注释了
 //func (r *Raft) sendHeartbeat(to uint64) {
 //	// Your Code Here (2A).
 //}

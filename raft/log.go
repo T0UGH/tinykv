@@ -102,7 +102,7 @@ func (l *RaftLog) from(i uint64) (ents []*pb.Entry) {
 // 返回log entries的最后一个索引
 // LastIndex return the last index of the log entries
 func (l *RaftLog) LastIndex() uint64 {
-	// todo 待实现
+	// todo 实现它
 	// Your Code Here (2A).
 	return 0
 }
@@ -110,6 +110,25 @@ func (l *RaftLog) LastIndex() uint64 {
 // 返回entry i的term
 // Term return the term of the entry in the given index
 func (l *RaftLog) Term(i uint64) (uint64, error) {
+	// todo 实现它 // todo 需要考虑有一些term被存到disk的问题
 	// Your Code Here (2A).
 	return 0, nil
+}
+
+func (l *RaftLog) UpdateEntries(index uint64, entries []*pb.Entry) {
+	if index <= -1 {
+		l.entries = append(l.entries[:0], ConvertEntrySlice(entries)...)
+	} else {
+		l.entries = append(l.entries[:index+1], ConvertEntrySlice(entries)...)
+	}
+}
+
+func (l *RaftLog) UpdateCommit(commit uint64) {
+	if commit > l.committed {
+		if commit > l.LastIndex() {
+			l.committed = l.LastIndex()
+		} else {
+			l.committed = commit
+		}
+	}
 }

@@ -137,3 +137,25 @@ func countVotes(votes map[uint64]bool) int {
 	}
 	return count
 }
+
+func ConvertEntrySlice(ps []*pb.Entry) []pb.Entry {
+	es := make([]pb.Entry, 0)
+	for _, p := range ps {
+		es = append(es, *p)
+	}
+	return es
+}
+
+func ExtractProgressForMatches(prs map[uint64]*Progress) []uint64 {
+	matches := make([]uint64, 0)
+	for _, pr := range prs {
+		matches = append(matches, pr.Match)
+	}
+	return matches
+}
+
+// 计算并返回 (n + 1) / 2 + 1 大的那个Match
+func CalcCommit(matches []uint64) uint64 {
+	sort.Slice(matches, func(i, j int) bool { return matches[i] < matches[j] })
+	return matches[len(matches)/2]
+}
