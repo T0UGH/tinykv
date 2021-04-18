@@ -419,7 +419,7 @@ func (r *Raft) updateAndBroadCastCommitProgress() {
 	matches := ExtractProgressForMatches(r.Prs)
 	commit := CalcCommit(matches)
 	updateSuccess := r.RaftLog.UpdateCommit(commit)
-	// 更新成功了就再发一个heartBeat
+	// 更新成功了就再发一个appendEntries
 	// 这样很不好, 因为浪费通信 为了通过 TestLogReplication2AB
 	if updateSuccess {
 		r.broadCastAppend()

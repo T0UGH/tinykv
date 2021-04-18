@@ -39,7 +39,9 @@ func (h *LeaderMsgHeartbeatHandler) Handle(m pb.Message) error {
 	//todo 后面的lab是否需要精进一下
 	if m.GetTerm() > h.raft.Term {
 		h.raft.becomeFollower(m.GetTerm(), m.GetFrom())
-		h.raft.RaftLog.UpdateCommit(m.GetCommit())
+		// todo: 这里的UpdateCommit有个大坑, 有可能老的日志还没有被干掉就更新了Commit, 从而导致应用了错误的日志
+		// todo: 暂时的解决方案是先不用heartBeat更新commit
+		//h.raft.RaftLog.UpdateCommit(m.GetCommit())
 	}
 	//2 回复一个HeartbeatResponse
 	h.raft.addMsg(pb.Message{
@@ -69,7 +71,7 @@ func (h *FollowerMsgHeartbeatHandler) Handle(m pb.Message) error {
 		h.raft.resetElectionClock()
 	}
 
-	h.raft.RaftLog.UpdateCommit(m.GetCommit())
+	//h.raft.RaftLog.UpdateCommit(m.GetCommit())
 	h.raft.Term = max(m.GetTerm(), h.raft.Term)
 
 	//2 回复一个HeartbeatResponse
@@ -91,11 +93,11 @@ func NewCandidateMsgHeartbeatHandler(raft *Raft) *CandidateMsgHeartbeatHandler {
 
 // Candidate如何处理收到的心跳?
 func (h *CandidateMsgHeartbeatHandler) Handle(m pb.Message) error {
-	//1 如果心跳中的Term大于等于则更新自己的Term, 退回到Follower, 更新Leader, 更新CommittedMsg
+	//1 如果心跳中的Term大于等于则更新自己的Term, 退回到Follower, 更新Leader
 	// todo 更新CommittedMsg留给Project 2ab
 	if m.GetTerm() >= h.raft.Term {
 		h.raft.becomeFollower(m.GetTerm(), m.GetFrom())
-		h.raft.RaftLog.UpdateCommit(m.GetCommit())
+		//h.raft.RaftLog.UpdateCommit(m.GetCommit())
 	}
 	//2 回复一个HeartbeatResponse
 	h.raft.addMsg(pb.Message{
@@ -161,8 +163,8 @@ func (h *MsgRequestVoteHandler) Handle(m pb.Message) error {
 		return nil
 	}
 
-	// case 2: 一样大
-	if m.GetTerm() == h.raft.Term {
+	// case 2: 一样大并且还没投
+	if m.GetTerm() == h.raft.Term && h.raft.Vote != None {
 		reply.Reject = h.raft.Vote != m.GetFrom()
 		h.raft.addMsg(reply)
 		return nil
@@ -208,6 +210,7 @@ func (h *CandidateMsgRequestVoteResponseHandler) Handle(m pb.Message) error {
 	count := countVotes(h.raft.votes)
 	if count >= len(h.raft.peers)/2+1 {
 		h.raft.becomeLeader()
+		return nil
 	}
 	// 如果收到了全员的回复, 且选票不够, 将自己变成Follower
 	if len(h.raft.votes) == len(h.raft.peers) {
@@ -291,6 +294,10 @@ func (h *MsgAppendHandler) Handle(m pb.Message) error {
 		return nil
 	}
 
+	// 4 如果我是leader，并且还收到了一个至少termNumber跟我一样新的AppendEntries，就说明我是老leader，则设置我不是leader了
+	// 即便我是follower也在这里调用一下来更新状态
+	h.raft.becomeFollower(m.GetTerm(), m.GetFrom())
+
 	// 2 先判断有没有上一条日志
 	lastTerm, err := h.raft.RaftLog.Term(m.GetIndex())
 	if err == ErrUnavailable || lastTerm != m.LogTerm {
@@ -301,12 +308,8 @@ func (h *MsgAppendHandler) Handle(m pb.Message) error {
 	// 3
 	h.raft.RaftLog.Append(ConvertEntrySlice(m.GetEntries()))
 
-	// 4 如果我是leader，并且还收到了一个至少termNumber跟我一样新的AppendEntries，就说明我是老leader，则设置我不是leader了
-	// 即便我是follower也在这里调用一下来更新状态
-	h.raft.becomeFollower(m.GetTerm(), m.GetFrom())
-
 	// 5 更新commitIndex
-	h.raft.RaftLog.UpdateCommit(m.Commit)
+	h.raft.RaftLog.UpdateCommit(min(m.Commit, m.GetIndex()+uint64(len(m.GetEntries()))))
 
 	reply.Term = h.raft.Term
 	reply.Reject = false
