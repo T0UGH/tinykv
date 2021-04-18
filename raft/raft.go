@@ -229,7 +229,6 @@ func newRaft(c *Config) *Raft {
 	raft.id = c.ID
 	raft.peers = c.peers
 	// todo: 什么时候考虑从disk中恢复数据
-	raft.Term = 0
 	raft.State = StateFollower
 	raft.roleMap = InitRoleMap(raft)
 	raft.heartbeatTimeout = c.HeartbeatTick
@@ -237,6 +236,9 @@ func newRaft(c *Config) *Raft {
 	raft.electionElapsed = 0
 	raft.heartbeatElapsed = 0
 	raft.RaftLog = newLog(c.Storage)
+	hardState, _, _ := raft.RaftLog.storage.InitialState()
+	raft.Term = hardState.Term
+	raft.Vote = hardState.Vote
 	return raft
 }
 
@@ -252,7 +254,7 @@ func (r *Raft) sendAppend(to uint64) bool {
 		Term:    r.Term,
 		From:    r.id,
 	}
-	entries, _ := r.RaftLog.From(r.Prs[to].Next)
+	entries, _ := r.RaftLog.Entries(r.Prs[to].Next, r.RaftLog.LastIndex()+1)
 	msg.Entries = ConvertEntryPointerSlice(entries)
 	msg.Index = r.Prs[to].Next - 1
 	msg.LogTerm, _ = r.RaftLog.Term(msg.Index)
@@ -312,8 +314,6 @@ func (r *Raft) becomeCandidate() {
 // becomeLeader transform this peer's state to leader
 func (r *Raft) becomeLeader() {
 	// Your Code Here (2A).
-	// todo 注意: Leader应该发送一个no op entry在它的任期中
-	// NOTE: Leader should propose a noop entry on its term
 	// 1 先切换个状态
 	r.State = StateLeader
 	// 2 重置HeartBeat时钟
@@ -323,11 +323,21 @@ func (r *Raft) becomeLeader() {
 	// 4 初始化Prs
 	r.Prs = make(map[uint64]*Progress)
 	for _, id := range r.peers {
-		r.Prs[id] = &Progress{
-			Match: 0,
-			Next:  r.RaftLog.LastIndex() + 1,
+		if id == r.id {
+			r.Prs[id] = &Progress{
+				Match: r.RaftLog.LastIndex(),
+				Next:  r.RaftLog.LastIndex() + 1,
+			}
+		} else {
+			r.Prs[id] = &Progress{
+				Match: 0,
+				Next:  r.RaftLog.LastIndex() + 1,
+			}
 		}
 	}
+	// NOTE: Leader should propose a noop entry on its term
+	// 5 发一条no op entry在它的任期中
+	r.Step(pb.Message{From: r.id, To: r.id, MsgType: pb.MessageType_MsgPropose, Entries: []*pb.Entry{{}}})
 }
 
 // 给上层应用和test提供的处理消息的入口, 需要根据消息类型的不同来调用不同的函数来处理
@@ -403,4 +413,15 @@ func (r *Raft) resetElectionClock() {
 	r.electionElapsed = 0
 	rand.Seed(time.Now().UnixNano())
 	r.electionTimeout = r.electionTimeoutBaseline/2 + rand.Intn(r.electionTimeoutBaseline)
+}
+
+func (r *Raft) updateAndBroadCastCommitProgress() {
+	matches := ExtractProgressForMatches(r.Prs)
+	commit := CalcCommit(matches)
+	updateSuccess := r.RaftLog.UpdateCommit(commit)
+	// 更新成功了就再发一个heartBeat
+	// 这样很不好, 因为浪费通信 为了通过 TestLogReplication2AB
+	if updateSuccess {
+		r.broadCastAppend()
+	}
 }

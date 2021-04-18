@@ -58,13 +58,11 @@ func (r *Raft) readMessages() []pb.Message {
 }
 
 func TestFake(t *testing.T) {
-	//r := newTestRaft(1, []uint64{1, 2}, 5, 1, NewMemoryStorage())
-	//r.becomeCandidate()
-	s := NewMemoryStorage()
-	s.Append([]pb.Entry{{Data: []byte("foo"), Term: 1, Index: 1}})
-	t.Logf("123")
+	res := CalcCommit([]uint64{1, 1, 3, 3})
+	t.Log(res)
 }
 
+// pass
 func TestProgressLeader2AB(t *testing.T) {
 	r := newTestRaft(1, []uint64{1, 2}, 5, 1, NewMemoryStorage())
 	r.becomeCandidate()
@@ -73,7 +71,6 @@ func TestProgressLeader2AB(t *testing.T) {
 	// Send proposals to r1. The first 5 entries should be appended to the log.
 	propMsg := pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgPropose, Entries: []*pb.Entry{{Data: []byte("foo")}}}
 	for i := 0; i < 5; i++ {
-		t.Logf("curr %d", i)
 		if pr := r.Prs[r.id]; pr.Match != uint64(i+1) || pr.Next != pr.Match+1 {
 			t.Errorf("unexpected progress %v", pr)
 		}
@@ -144,6 +141,8 @@ func TestLeaderCycle2AA(t *testing.T) {
 // newly-elected leader does *not* have the newest (i.e. highest term)
 // log entries, and must overwrite higher-term log entries with
 // lower-term ones.
+// TestLeaderElectionOverwriteNewerLogs试验中，
+// 新当选的领导人没有最新的（即最高term）日志条目，并且必须用更低term的日志覆盖高term的。
 func TestLeaderElectionOverwriteNewerLogs2AB(t *testing.T) {
 	cfg := func(c *Config) {
 		c.peers = idsBySize(5)
@@ -162,6 +161,12 @@ func TestLeaderElectionOverwriteNewerLogs2AB(t *testing.T) {
 	// entry overwrites the losers'. (TestLeaderSyncFollowerLog tests
 	// the case where older log entries are overwritten, so this test
 	// focuses on the case where the newer entries are lost).
+	// 这个网络代表如下事件按顺序发生的结果
+	// - 节点1赢得第一轮的选举
+	// - 节点1发送了一个复制条目给节点2, 但是在发送给其他节点之前挂了
+	// - 节点3赢得了第二轮的选举
+	// - 节点3往它的logs里面写了一条, 但是在发出它之前挂了
+	// 在这种情况下, 节点1, 2, 3都有未提交的日志并且都有赢得选举的可能, 赢家会覆盖输家的日志
 	n := newNetworkWithConfig(cfg,
 		entsWithConfig(cfg, 1),     // Node 1: Won first election
 		entsWithConfig(cfg, 1),     // Node 2: Got logs from node 1
@@ -172,6 +177,8 @@ func TestLeaderElectionOverwriteNewerLogs2AB(t *testing.T) {
 	// Node 1 campaigns. The election fails because a quorum of nodes
 	// know about the election that already happened at term 2. Node 1's
 	// term is pushed ahead to 2.
+	// Node 1 发起选举。 本次选举将会失败因为大多数节点已经知道这轮选举发生了
+	// Node 1的term号将被更新为2
 	n.send(pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgHup})
 	sm1 := n.peers[1].(*Raft)
 	if sm1.State != StateFollower {
@@ -182,6 +189,7 @@ func TestLeaderElectionOverwriteNewerLogs2AB(t *testing.T) {
 	}
 
 	// Node 1 campaigns again with a higher term. This time it succeeds.
+	// Node 1 这次用一个更高的Term号选举然后成功了
 	n.send(pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgHup})
 	if sm1.State != StateLeader {
 		t.Errorf("state = %s, want StateLeader", sm1.State)
@@ -194,7 +202,8 @@ func TestLeaderElectionOverwriteNewerLogs2AB(t *testing.T) {
 	// term 3 at index 2).
 	for i := range n.peers {
 		sm := n.peers[i].(*Raft)
-		entries := sm.RaftLog.entries
+		// 这里修改是因为RaftLog的实现方式, 加了一个dummy元素
+		entries, _ := sm.RaftLog.Entries(sm.RaftLog.FirstIndex(), sm.RaftLog.LastIndex()+1)
 		if len(entries) != 2 {
 			t.Fatalf("node %d: len(entries) == %d, want 2", i, len(entries))
 		}
@@ -300,10 +309,12 @@ func TestLogReplication2AB(t *testing.T) {
 		for j, x := range tt.network.peers {
 			sm := x.(*Raft)
 
+			// 第0轮第3个对等体需要提交2实际为1
 			if sm.RaftLog.committed != tt.wcommitted {
 				t.Errorf("#%d.%d: committed = %d, want %d", i, j, sm.RaftLog.committed, tt.wcommitted)
 			}
 
+			// 后面这些用来验证消息对不对
 			ents := []pb.Entry{}
 			for _, e := range nextEnts(sm, tt.network.storage[j]) {
 				if e.Data != nil {
@@ -339,15 +350,17 @@ func TestSingleNodeCommit2AB(t *testing.T) {
 
 // TestCommitWithoutNewTermEntry tests the entries could be committed
 // when leader changes with noop entry and no new proposal comes in.
+// TestCommitWithoutNewTermEntry测试当领导者更改并且没有新提议进入时，可以提交条目。
 func TestCommitWithoutNewTermEntry2AB(t *testing.T) {
 	tt := newNetwork(nil, nil, nil, nil, nil)
 	tt.send(pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgHup})
 
-	// 0 cannot reach 2,3,4
+	// 1 cannot reach 3,4,5
 	tt.cut(1, 3)
 	tt.cut(1, 4)
 	tt.cut(1, 5)
 
+	// 加了两条, 但是无法成功提交, 因为网断了, 现在是少数派分区
 	tt.send(pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgPropose, Entries: []*pb.Entry{{Data: []byte("some data")}}})
 	tt.send(pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgPropose, Entries: []*pb.Entry{{Data: []byte("some data")}}})
 
@@ -359,24 +372,31 @@ func TestCommitWithoutNewTermEntry2AB(t *testing.T) {
 	// network recovery
 	tt.recover()
 
+	// 让节点2当选, 它刚才网没断, 它有那些日志
 	// elect 2 as the new leader with term 2
 	// after append a ChangeTerm entry from the current term, all entries
 	// should be committed
 	tt.send(pb.Message{From: 2, To: 2, MsgType: pb.MessageType_MsgHup})
 
+	// 检查是不是都提交了
 	if sm.RaftLog.committed != 4 {
 		t.Errorf("committed = %d, want %d", sm.RaftLog.committed, 4)
 	}
 }
 
+// There are five nodes 1,2,3,4,5. Assuming that node 5 is isolated from others and raft can keep going.
+// Now, the network recovered and the leader don't receive proposal cmd for a long time, but it will send hearbeart as usual.
+// Since heartbeat response that contains LogIndex indicate follower's LastIndex.
+// The leader should send log to follower when it realize follower doesn't have latest log.
 // TestCommitWithHeartbeat tests leader can send log
 // to follower when it received a heartbeat response
-// which indicate it doesn't have update-to-date log
+// which indicate it doesn't have update-to-date log 谁没有最新的日志???
+// TestCommitWithHeartbeat测试领导者可以在收到心跳响应时将日志发送给关注者，表明它没有update-to-date日志
 func TestCommitWithHeartbeat2AB(t *testing.T) {
 	tt := newNetwork(nil, nil, nil, nil, nil)
 	tt.send(pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgHup})
 
-	// isolate node 5
+	// isolate node 完全屏蔽第五个节点的网络
 	tt.isolate(5)
 	tt.send(pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgPropose, Entries: []*pb.Entry{{Data: []byte("some data")}}})
 	tt.send(pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgPropose, Entries: []*pb.Entry{{Data: []byte("some data")}}})
@@ -386,12 +406,14 @@ func TestCommitWithHeartbeat2AB(t *testing.T) {
 		t.Errorf("committed = %d, want %d", sm.RaftLog.committed, 1)
 	}
 
-	// network recovery
+	// network recovery 恢复网络
 	tt.recover()
 
 	// leader broadcast heartbeat
 	tt.send(pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgBeat})
 
+	// 让掉线的节点赶紧跟上进度
+	// 收到heartBeatResponse之后查看进度, 如果进度不行的话, 就sendAppend赶紧发起来
 	if sm.RaftLog.committed != 3 {
 		t.Errorf("committed = %d, want %d", sm.RaftLog.committed, 3)
 	}
@@ -403,9 +425,12 @@ func TestDuelingCandidates2AB(t *testing.T) {
 	c := newTestRaft(3, []uint64{1, 2, 3}, 10, 1, NewMemoryStorage())
 
 	nt := newNetwork(a, b, c)
+	// 1和3之间断网
 	nt.cut(1, 3)
 
+	// 1开选
 	nt.send(pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgHup})
+	// 3开选
 	nt.send(pb.Message{From: 3, To: 3, MsgType: pb.MessageType_MsgHup})
 
 	// 1 becomes leader since it receives votes from 1 and 2
@@ -420,13 +445,18 @@ func TestDuelingCandidates2AB(t *testing.T) {
 		t.Errorf("state = %s, want %s", sm.State, StateCandidate)
 	}
 
+	// 网络恢复
 	nt.recover()
 
 	// candidate 3 now increases its term and tries to vote again
 	// we expect it to disrupt the leader 1 since it has a higher term
 	// 3 will be follower again since both 1 and 2 rejects its vote request since 3 does not have a long enough log
+	// 候选人3现在增加其任期，并尝试再次发起投票
+	// 我们期望它会破坏领导者1，因为它的term更高
+	// 由于1和2都拒绝了投票请求，因为3没有足够长的日志，因此3将再次成为follower
 	nt.send(pb.Message{From: 3, To: 3, MsgType: pb.MessageType_MsgHup})
 
+	// 验证各种信息是否对
 	wlog := newLog(newMemoryStorageWithEnts([]pb.Entry{{}, {Data: nil, Term: 1, Index: 1}}))
 	wlog.committed = 1
 	tests := []struct {
@@ -461,26 +491,30 @@ func TestDuelingCandidates2AB(t *testing.T) {
 
 func TestCandidateConcede2AB(t *testing.T) {
 	tt := newNetwork(nil, nil, nil)
+	// 给1断网
 	tt.isolate(1)
 
+	// 1和3竞选 -> 3当选 因为1断网了
 	tt.send(pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgHup})
 	tt.send(pb.Message{From: 3, To: 3, MsgType: pb.MessageType_MsgHup})
 
-	// heal the partition
+	// heal the partition 恢复网
 	tt.recover()
-	// send heartbeat; reset wait
+	// send heartbeat; reset wait 3发送心跳
 	tt.send(pb.Message{From: 3, To: 3, MsgType: pb.MessageType_MsgBeat})
 
 	data := []byte("force follower")
 	// send a proposal to 3 to flush out a MessageType_MsgAppend to 1
 	tt.send(pb.Message{From: 3, To: 3, MsgType: pb.MessageType_MsgPropose, Entries: []*pb.Entry{{Data: data}}})
-	// send heartbeat; flush out commit
+	// send heartbeat; flush out commit //todo 我的心跳一定能flush out commit
 	tt.send(pb.Message{From: 3, To: 3, MsgType: pb.MessageType_MsgBeat})
 
+	// 检查1是否是follower
 	a := tt.peers[1].(*Raft)
 	if g := a.State; g != StateFollower {
 		t.Errorf("state = %s, want %s", g, StateFollower)
 	}
+	// 检测1的term是否是1
 	if g := a.Term; g != 1 {
 		t.Errorf("term = %d, want %d", g, 1)
 	}
@@ -489,6 +523,7 @@ func TestCandidateConcede2AB(t *testing.T) {
 	wantLog := ltoa(wlog)
 	for i, p := range tt.peers {
 		if sm, ok := p.(*Raft); ok {
+			// 比较log对不对
 			l := ltoa(sm.RaftLog)
 			if g := diffu(wantLog, l); g != "" {
 				t.Errorf("#%d: diff:\n%s", i, g)
@@ -511,23 +546,22 @@ func TestSingleNodeCandidate2AA(t *testing.T) {
 
 func TestOldMessages2AB(t *testing.T) {
 	tt := newNetwork(nil, nil, nil)
-	// make 0 leader @ term 3
+	// make 0 leader @ term 3 让节点1成为term3的leader
 	tt.send(pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgHup})
 	tt.send(pb.Message{From: 2, To: 2, MsgType: pb.MessageType_MsgHup})
 	tt.send(pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgHup})
 	// pretend we're an old leader trying to make progress; this entry is expected to be ignored.
+	// 发送一个老消息, 应该被丢弃
 	tt.send(pb.Message{From: 2, To: 1, MsgType: pb.MessageType_MsgAppend, Term: 2, Entries: []*pb.Entry{{Index: 3, Term: 2}}})
 	// commit a new entry
 	tt.send(pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgPropose, Entries: []*pb.Entry{{Data: []byte("somedata")}}})
 
-	ilog := newLog(
-		&MemoryStorage{
-			ents: []pb.Entry{
-				{}, {Data: nil, Term: 1, Index: 1},
-				{Data: nil, Term: 2, Index: 2}, {Data: nil, Term: 3, Index: 3},
-				{Data: []byte("somedata"), Term: 3, Index: 4},
-			},
-		})
+	ilog := newLog(newMemoryStorageWithEnts([]pb.Entry{
+		{}, {Data: nil, Term: 1, Index: 1},
+		{Data: nil, Term: 2, Index: 2}, {Data: nil, Term: 3, Index: 3},
+		{Data: []byte("somedata"), Term: 3, Index: 4},
+	}))
+
 	ilog.committed = 4
 	base := ltoa(ilog)
 	for i, p := range tt.peers {

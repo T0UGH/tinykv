@@ -140,8 +140,8 @@ func countVotes(votes map[uint64]bool) int {
 
 func ConvertEntryPointerSlice(es []pb.Entry) []*pb.Entry {
 	ps := make([]*pb.Entry, 0)
-	for _, e := range es {
-		ps = append(ps, &e)
+	for i := range es {
+		ps = append(ps, &(es[i]))
 	}
 	return ps
 }
@@ -165,5 +165,5 @@ func ExtractProgressForMatches(prs map[uint64]*Progress) []uint64 {
 // 计算并返回 (n + 1) / 2 + 1 大的那个Match
 func CalcCommit(matches []uint64) uint64 {
 	sort.Slice(matches, func(i, j int) bool { return matches[i] < matches[j] })
-	return matches[len(matches)/2]
+	return matches[(len(matches)-1)/2]
 }

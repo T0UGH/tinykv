@@ -1,6 +1,8 @@
 package raft
 
-import pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
+import (
+	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
+)
 
 type Handler interface {
 	Handle(m pb.Message) error
@@ -18,7 +20,8 @@ func NewLeaderMsgBeatHandler(raft *Raft) *LeaderMsgBeatHandler {
 func (h *LeaderMsgBeatHandler) Handle(m pb.Message) error {
 	h.raft.broadCastMsg(pb.Message{
 		Term:    h.raft.Term,
-		MsgType: pb.MessageType_MsgHeartbeat})
+		MsgType: pb.MessageType_MsgHeartbeat,
+		Commit:  h.raft.RaftLog.committed})
 	return nil
 }
 
@@ -36,6 +39,7 @@ func (h *LeaderMsgHeartbeatHandler) Handle(m pb.Message) error {
 	//todo 后面的lab是否需要精进一下
 	if m.GetTerm() > h.raft.Term {
 		h.raft.becomeFollower(m.GetTerm(), m.GetFrom())
+		h.raft.RaftLog.UpdateCommit(m.GetCommit())
 	}
 	//2 回复一个HeartbeatResponse
 	h.raft.addMsg(pb.Message{
@@ -65,6 +69,7 @@ func (h *FollowerMsgHeartbeatHandler) Handle(m pb.Message) error {
 		h.raft.resetElectionClock()
 	}
 
+	h.raft.RaftLog.UpdateCommit(m.GetCommit())
 	h.raft.Term = max(m.GetTerm(), h.raft.Term)
 
 	//2 回复一个HeartbeatResponse
@@ -90,6 +95,7 @@ func (h *CandidateMsgHeartbeatHandler) Handle(m pb.Message) error {
 	// todo 更新CommittedMsg留给Project 2ab
 	if m.GetTerm() >= h.raft.Term {
 		h.raft.becomeFollower(m.GetTerm(), m.GetFrom())
+		h.raft.RaftLog.UpdateCommit(m.GetCommit())
 	}
 	//2 回复一个HeartbeatResponse
 	h.raft.addMsg(pb.Message{
@@ -167,6 +173,8 @@ func (h *MsgRequestVoteHandler) Handle(m pb.Message) error {
 	lastTerm, _ := h.raft.RaftLog.Term(lastIndex)
 	if m.GetLogTerm() < lastTerm || (m.GetLogTerm() == lastTerm && m.GetIndex() < lastIndex) {
 		reply.Reject = true
+		// 但是因为还是收到了Term更新的Req, 因此还是把自己置为Follower
+		h.raft.becomeFollower(m.GetTerm(), None)
 		h.raft.addMsg(reply)
 		return nil
 	}
@@ -200,6 +208,10 @@ func (h *CandidateMsgRequestVoteResponseHandler) Handle(m pb.Message) error {
 	count := countVotes(h.raft.votes)
 	if count >= len(h.raft.peers)/2+1 {
 		h.raft.becomeLeader()
+	}
+	// 如果收到了全员的回复, 且选票不够, 将自己变成Follower
+	if len(h.raft.votes) == len(h.raft.peers) {
+		h.raft.becomeFollower(h.raft.Term, None)
 	}
 	return nil
 }
@@ -238,13 +250,20 @@ func NewLeaderMsgProposeHandler(raft *Raft) *LeaderMsgProposeHandler {
 func (h *LeaderMsgProposeHandler) Handle(m pb.Message) error {
 
 	// 先给entries添加一些额外信息
-	for _, e := range m.Entries {
+	for i, e := range m.Entries {
 		e.Term = h.raft.Term
-		e.Index = h.raft.RaftLog.LastIndex() + 1
+		e.Index = h.raft.RaftLog.LastIndex() + 1 + uint64(i)
 	}
 
 	// 添加到log中
-	h.raft.RaftLog.AddEntries(m)
+	h.raft.RaftLog.Append(ConvertEntrySlice(m.Entries))
+
+	// 更新本节点的进度
+	h.raft.Prs[h.raft.id].Match = h.raft.RaftLog.LastIndex()
+	h.raft.Prs[h.raft.id].Next = h.raft.RaftLog.LastIndex() + 1
+
+	// 如果是单个节点有可能可以直接更新Commit的进度
+	h.raft.updateAndBroadCastCommitProgress()
 
 	// 广播
 	h.raft.broadCastAppend()
@@ -262,6 +281,7 @@ func (h *MsgAppendHandler) Handle(m pb.Message) error {
 		MsgType: pb.MessageType_MsgAppendResponse,
 		To:      m.GetFrom(),
 		Term:    h.raft.Term,
+		Index:   m.GetIndex(),
 		Reject:  true,
 	}
 
@@ -272,14 +292,14 @@ func (h *MsgAppendHandler) Handle(m pb.Message) error {
 	}
 
 	// 2 先判断有没有上一条日志
-	lastTerm, err := h.raft.RaftLog.Term(m.Index)
+	lastTerm, err := h.raft.RaftLog.Term(m.GetIndex())
 	if err == ErrUnavailable || lastTerm != m.LogTerm {
 		h.raft.addMsg(reply)
 		return nil
 	}
 
 	// 3
-	h.raft.RaftLog.UpdateEntries(m.GetIndex(), m.GetEntries())
+	h.raft.RaftLog.Append(ConvertEntrySlice(m.GetEntries()))
 
 	// 4 如果我是leader，并且还收到了一个至少termNumber跟我一样新的AppendEntries，就说明我是老leader，则设置我不是leader了
 	// 即便我是follower也在这里调用一下来更新状态
@@ -309,16 +329,19 @@ func NewMsgAppendResponseHandler(raft *Raft) *MsgAppendResponseHandler {
 
 func (h *MsgAppendResponseHandler) Handle(m pb.Message) error {
 	// 1 如果 reject了 就把Next-1然后再发一遍
+	// 这里多一个判断条件是为了防止连发两个false的情况出现
 	if m.GetReject() == true {
-		h.raft.Prs[m.GetFrom()].Next--
-		h.raft.sendAppend(m.GetFrom())
+		if m.GetIndex()+1 == h.raft.Prs[m.GetFrom()].Next {
+			h.raft.Prs[m.GetFrom()].Next--
+			h.raft.sendAppend(m.GetFrom())
+		}
+		return nil
 	}
 	// 2 如果没有reject 就更新matchIndex然后, 重算commitIndex
 	// 问: 没有reject如何更新matchIndex? 我需要知道一些信息, 比如当前进行到了哪里，然后用这个信息来更新
 	h.raft.Prs[m.GetFrom()].Match = m.GetIndex()
-	matches := ExtractProgressForMatches(h.raft.Prs)
-	commit := CalcCommit(matches)
-	h.raft.RaftLog.UpdateCommit(commit)
+	h.raft.Prs[m.GetFrom()].Next = max(h.raft.Prs[m.GetFrom()].Next, m.GetIndex()+1)
+	h.raft.updateAndBroadCastCommitProgress()
 	return nil
 }
 
@@ -330,3 +353,18 @@ func NewNoopHandler() *NoopHandler {
 }
 
 func (h *NoopHandler) Handle(m pb.Message) error { return nil }
+
+type MsgHeartBeatResponseHandler struct {
+	raft *Raft
+}
+
+func NewMsgHeartBeatResponseHandler(raft *Raft) *MsgHeartBeatResponseHandler {
+	return &MsgHeartBeatResponseHandler{raft: raft}
+}
+
+func (h *MsgHeartBeatResponseHandler) Handle(m pb.Message) error {
+	if h.raft.Prs[h.raft.id].Match > h.raft.Prs[m.GetFrom()].Match {
+		h.raft.sendAppend(m.GetFrom())
+	}
+	return nil
+}

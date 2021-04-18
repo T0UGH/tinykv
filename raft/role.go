@@ -27,7 +27,7 @@ func NewLeaderRole(raft *Raft) *LeaderRole {
 	handlerMap[pb.MessageType_MsgRequestVoteResponse] = NewNoopHandler()
 	handlerMap[pb.MessageType_MsgBeat] = NewLeaderMsgBeatHandler(raft)
 	handlerMap[pb.MessageType_MsgHeartbeat] = NewLeaderMsgHeartbeatHandler(raft)
-	handlerMap[pb.MessageType_MsgHeartbeatResponse] = NewNoopHandler()
+	handlerMap[pb.MessageType_MsgHeartbeatResponse] = NewMsgHeartBeatResponseHandler(raft)
 	handlerMap[pb.MessageType_MsgPropose] = NewLeaderMsgProposeHandler(raft)
 	handlerMap[pb.MessageType_MsgAppend] = NewMsgAppendHandler(raft)
 	handlerMap[pb.MessageType_MsgAppendResponse] = NewMsgAppendResponseHandler(raft)

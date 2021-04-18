@@ -14,7 +14,10 @@
 
 package raft
 
-import pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
+import (
+	"github.com/pingcap-incubator/tinykv/log"
+	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
+)
 
 // RaftLog用来管理Log entries
 // RaftLog manage the log entries, its struct look like:
@@ -49,7 +52,7 @@ type RaftLog struct {
 	// Everytime handling `Ready`, the unstabled logs will be included.
 	stabled uint64
 
-	// 所有还在内存中的日志
+	// 所有还没有被压缩的日志
 	// all entries that have not yet compact.
 	entries []pb.Entry
 
@@ -65,13 +68,21 @@ type RaftLog struct {
 // to the state that it just commits and applies the latest snapshot.
 func newLog(storage Storage) *RaftLog {
 	// Your Code Here (2A).
-	// todo: 2AC真正使用Storage的时候要改这里
+	hardState, _, _ := storage.InitialState()
+	lastIndex, _ := storage.LastIndex()
+	entries := make([]pb.Entry, 1)
+	firstIndex, _ := storage.FirstIndex()
+	if lastIndex >= firstIndex {
+		storageEntries, _ := storage.Entries(firstIndex, lastIndex+1)
+		entries = append(entries, storageEntries...)
+	}
+
 	return &RaftLog{
 		storage:   storage,
-		entries:   make([]pb.Entry, 0),
-		applied:   0,
-		committed: 0,
-		stabled:   0,
+		entries:   entries,
+		applied:   0, //todo:初试值问题
+		committed: hardState.Commit,
+		stabled:   lastIndex,
 	}
 }
 
@@ -87,32 +98,40 @@ func (l *RaftLog) maybeCompact() {
 // unstableEntries return all the unstable entries
 func (l *RaftLog) unstableEntries() []pb.Entry {
 	// Your Code Here (2A).
-	return l.entries
+	unstable := l.stabled + 1
+	if unstable > l.LastIndex() {
+		return make([]pb.Entry, 0)
+	}
+	return l.entries[unstable:]
 }
 
 // 返回所有提交了但是还没applied的entries
 // nextEnts returns all the committed but not applied entries
-func (l *RaftLog) nextEnts() []pb.Entry {
+func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 	// Your Code Here (2A).
-	return l.entries[l.applied:l.committed]
+	unApplied := l.applied + 1
+	if unApplied > l.LastIndex() {
+		return make([]pb.Entry, 0)
+	}
+	return l.entries[l.applied+1 : l.committed+1]
 }
 
 // 返回i之后的所有条目
-func (l *RaftLog) From(i uint64) ([]pb.Entry, error) {
-	// 0 先判断i是否合法 -> 越界了
-	if int(i-l.stabled) > len(l.entries) {
-		return make([]pb.Entry, 0), ErrUnavailable
+func (l *RaftLog) Entries(lo, hi uint64) ([]pb.Entry, error) {
+	offset := l.entries[0].Index
+	if lo <= offset {
+		return nil, ErrCompacted
 	}
-	// 1 全都在Log里
-	if i > l.stabled {
-		return l.entries[i-l.stabled-1:], nil
+	if hi > l.LastIndex()+1 {
+		log.Panicf("entries' hi(%d) is out of bound lastindex(%d)", hi, l.LastIndex())
 	}
-	// 2 一部分在Storage中, 还有一部分在log中
-	part1, err := l.storage.Entries(i, l.stabled+1)
-	if err != nil {
-		return make([]pb.Entry, 0), err
+
+	ents := l.entries[lo-offset : hi-offset]
+	if len(l.entries) == 1 && len(ents) != 0 {
+		// only contains dummy entries.
+		return nil, ErrUnavailable
 	}
-	return append(part1, l.entries...), nil
+	return ents, nil
 }
 
 // 啥都没有的时候一般会返回0
@@ -120,43 +139,65 @@ func (l *RaftLog) From(i uint64) ([]pb.Entry, error) {
 // LastIndex return the last index of the log entries
 func (l *RaftLog) LastIndex() uint64 {
 	// Your Code Here (2A).
-	return l.stabled + uint64(len(l.entries))
+	return l.entries[0].Index + uint64(len(l.entries)) - 1
+}
+
+func (l *RaftLog) FirstIndex() uint64 {
+	return l.entries[0].Index + 1
 }
 
 // 返回entry i的term
 // Term return the term of the entry in the given index
 func (l *RaftLog) Term(i uint64) (uint64, error) {
-	// Your Code Here (2A).
-	// 先处理一种特殊情况
-	if i == 0 {
-		return 0, nil
+	offset := l.entries[0].Index
+	if i < offset {
+		return 0, ErrCompacted
 	}
-
-	if i <= l.stabled {
-		return l.storage.Term(i)
-	}
-
-	if int(i-l.stabled) > len(l.entries) {
+	if int(i-offset) >= len(l.entries) {
 		return 0, ErrUnavailable
 	}
-
-	return l.entries[i-l.stabled-1].Term, nil
+	return l.entries[i-offset].Term, nil
 }
 
-func (l *RaftLog) UpdateEntries(lastIndex uint64, entries []*pb.Entry) {
-	l.entries = append(l.entries[:lastIndex], ConvertEntrySlice(entries)...)
+func (l *RaftLog) Append(entries []pb.Entry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	first := l.FirstIndex()
+	last := entries[0].Index + uint64(len(entries)) - 1
+
+	// shortcut if there is no new entry.
+	if last < first {
+		return nil
+	}
+	// truncate compacted entries
+	if first > entries[0].Index {
+		entries = entries[first-entries[0].Index:]
+	}
+
+	offset := entries[0].Index - l.entries[0].Index
+	switch {
+	case uint64(len(l.entries)) > offset:
+		l.entries = append([]pb.Entry{}, l.entries[:offset]...)
+		l.entries = append(l.entries, entries...)
+	case uint64(len(l.entries)) == offset:
+		l.entries = append(l.entries, entries...)
+	default:
+		log.Panicf("missing log entry [last: %d, append at: %d]",
+			l.LastIndex(), entries[0].Index)
+	}
+	return nil
 }
 
-func (l *RaftLog) AddEntries(m pb.Message) {
-	l.entries = append(l.entries, ConvertEntrySlice(m.Entries)...)
-}
-
-func (l *RaftLog) UpdateCommit(commit uint64) {
+func (l *RaftLog) UpdateCommit(commit uint64) bool {
 	if commit > l.committed {
 		if commit > l.LastIndex() {
 			l.committed = l.LastIndex()
 		} else {
 			l.committed = commit
 		}
+		return true
 	}
+	return false
 }
