@@ -4,7 +4,6 @@ This is a series of projects on a key-value storage system built with the Raft c
 
 > 这是一系列关于用Raft共识算法构建的键值存储系统的项目。这些项目的灵感来自著名的MIT6.824课程，但目标是更接近行业实施。整个课程从TiKV中拿出来，用go重新编写。完成本课程后，您将有知识实现水平可扩展，高可用性，键值存储服务与分布式事务支持，并更好地理解TiKV实现。
 >
-> 
 
 The whole project is a skeleton code for a kv server and a scheduler server at the beginning, and you need to finish the core logic step by step:
 

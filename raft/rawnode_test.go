@@ -157,6 +157,7 @@ func TestRawNodeProposeAddDuplicateNode3A(t *testing.T) {
 
 // TestRawNodeStart ensures that a node can be started correctly, and can accept and commit
 // proposals.
+// TestRawNodeStart确保一个节点可以被正确地启动, 并且可以接收和提交proposals
 func TestRawNodeStart2AC(t *testing.T) {
 	storage := NewMemoryStorage()
 	rawNode, err := NewRawNode(newTestConfig(1, []uint64{1}, 10, 1, storage))
@@ -170,9 +171,11 @@ func TestRawNodeStart2AC(t *testing.T) {
 
 	rawNode.Propose([]byte("foo"))
 	rd = rawNode.Ready()
+	// 检验这条消息被rd返回了, 并且被提交了, 并且就只有这一条不多不少
 	if el := len(rd.Entries); el != len(rd.CommittedEntries) || el != 1 {
 		t.Errorf("got len(Entries): %+v, len(CommittedEntries): %+v, want %+v", el, len(rd.CommittedEntries), 1)
 	}
+	// 检测Data是不是完全相等
 	if !reflect.DeepEqual(rd.Entries[0].Data, rd.CommittedEntries[0].Data) || !reflect.DeepEqual(rd.Entries[0].Data, []byte("foo")) {
 		t.Errorf("got %+v %+v , want %+v", rd.Entries[0].Data, rd.CommittedEntries[0].Data, []byte("foo"))
 	}

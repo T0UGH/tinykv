@@ -21,8 +21,7 @@ The state machine is kept in sync through the use of a replicated log.
 For more details on Raft, see "In Search of an Understandable Consensus Algorithm"
 (https://ramcloud.stanford.edu/raft.pdf) by Diego Ongaro and John Ousterhout.
 
-> Raft是一种协议，节点群集可以使用该协议维护复制的状态机。
-> 通过使用复制的日志，状态机保持同步。
+> Raft是一种协议，节点群集可以使用该协议维护复制的状态机。通过使用复制的日志，状态机保持同步。
 > 有关Raft的更多详细信息，请参见“寻找可理解的共识算法”（https://ramcloud.stanford.edu/raft.pdf），作者是Diego Ongaro和John Ousterhout。
 
 ### Usage 用法
@@ -92,8 +91,7 @@ First, you must read from the `Node.Ready()` channel and process the updates it 
 
 2. Send all Messages to the nodes named in the To field. It is important that no messages be sent until the latest HardState has been persisted to disk, and all Entries written by any previous Ready batch (Messages may be sent while entries from the same batch are being persisted).
 
-2. > 将所有消息发送到“To”字段中命名的节点。
-> 重要的是，直到将最新的HardState持久化到磁盘上之前，都不要发送任何消息
+2. > 将所有消息发送到“To”字段中命名的节点。重要的是，直到将最新的HardState持久化到磁盘上，以及任何先前的Ready批处理写入的所有条目之前，都不要发送任何消息（可以在持久化来自同一批处理的条目时发送消息）。
 
 Note: Marshalling messages is not thread-safe; it is important that you make sure that no new entries are persisted while marshalling. The easiest way to achieve this is to serialize the messages directly inside your main raft loop.
 
@@ -143,6 +141,7 @@ The total state machine handling loop will look something like this:
     case <-s.Ticker:
       n.Tick()
     case rd := <-s.Node.Ready():
+      // 这几步是同步的, 因此不会在saveToStorage的同时sendMsg
       // 保存到硬盘
       saveToStorage(rd.State, rd.Entries, rd.Snapshot)
       // 发送消息
@@ -182,7 +181,7 @@ eraftpb.EntryType_EntryNormal. There is no guarantee that a proposed command wil
 committed; you may have to re-propose after a timeout.
 
 > 如果proposal是已提交，则数据将显示在类型为已提交的条目中eraftpb.EntryType_EntryNormal。
-> 不能保证a proposed command will be committed; 您可能必须在超时后re-propose。
+> 不能保证一个被proposed的命令就一定会被提交; 您可能必须在超时后re-propose。
 
 To add or remove a node in a cluster, build ConfChange struct 'cc' and call:
 
@@ -190,52 +189,30 @@ To add or remove a node in a cluster, build ConfChange struct 'cc' and call:
 
 	n.ProposeConfChange(cc)
 
-After config change is committed, some committed entry with type
-eraftpb.EntryType_EntryConfChange will be returned. You must apply it to node through:
+After config change is committed, some committed entry with type eraftpb.EntryType_EntryConfChange will be returned. You must apply it to node through:
+
+> 在配置变更被提交后, 有些类型为`eraftpb.EntryType_EntryConfChange`的已提交的entry将会被返回。你必须通过以下的方法将它应用到节点上
 
 	var cc eraftpb.ConfChange
 	cc.Unmarshal(data)
 	n.ApplyConfChange(cc)
 
-Note: An ID represents a unique node in a cluster for all time. A
-given ID MUST be used only once even if the old node has been removed.
-This means that for example IP addresses make poor node IDs since they
-may be reused. Node IDs must be non-zero.
+Note: An ID represents a unique node in a cluster for all time. A given ID MUST be used only once even if the old node has been removed. This means that for example IP addresses make poor node IDs since they may be reused. Node IDs must be non-zero.
 
-> 注意：ID始终代表集群中的唯一节点。 即使删除了旧节点，给定的ID也必须仅使用一次。
-> 这意味着，用ip地址做id很差劲，因为它们可能会被重用。 节点ID必须为非零。
+> 注意：ID始终代表集群中的唯一节点。 即使删除了旧节点，给定的ID也必须仅使用一次。这意味着，用ip地址做id很差劲，因为它们可能会被重用。 节点ID必须为非零。
 
 ### Implementation notes
 
-This implementation is up to date with the final Raft thesis
-(https://ramcloud.stanford.edu/~ongaro/thesis.pdf), although our
-implementation of the membership change protocol differs somewhat from
-that described in chapter 4. The key invariant that membership changes
-happen one node at a time is preserved, but in our implementation the
-membership change takes effect when its entry is applied, not when it
-is added to the log (so the entry is committed under the old
-membership instead of the new). This is equivalent in terms of safety,
-since the old and new configurations are guaranteed to overlap.
+This implementation is up to date with the final Raft thesis (https://ramcloud.stanford.edu/~ongaro/thesis.pdf), although our implementation of the membership change protocol differs somewhat from that described in chapter 4. The key invariant that membership changes happen one node at a time is preserved, but in our implementation the
+membership change takes effect when its entry is applied, not when it is added to the log (so the entry is committed under the old membership instead of the new). This is equivalent in terms of safety, since the old and new configurations are guaranteed to overlap.
 
-todo 没看懂
+> todo 没看懂 
+>
+> 该实现与最新的Raft论文同步（https://ramcloud.stanford.edu/~ongaro/thesis.pdf），尽管我们成员资格更改协议的实现与第4章中描述的有所不同。关键的不变点是，成员资格更改一次在一个节点上发生，但在我们的实现中，成员资格更改在应用它的条目时才生效，而不是在添加到日志时生效（因此该条目是在旧的成员资格而不是新的成员资格下提交的）。 就安全性而言，这是等效的，因为保证了新旧配置的重叠。
 
-该实现与最新的Raft论文同步（https://ramcloud.stanford.edu/~ongaro/thesis.pdf），尽管我们
-成员资格更改协议的实现与第4章中描述的有所不同。
-关键的不变点是，成员资格更改一次在一个节点上发生，但在我们的实现中，成员资格更改在应用它的条目时才生效，而不是在添加到日志时生效
-（因此该条目是在旧的成员资格而不是新的成员资格下提交的）。 就安全性而言，这是等效的，因为保证了新旧配置的重叠。
+To ensure that we do not attempt to commit two membership changes at once by matching log positions (which would be unsafe since they should have different quorum requirements), we simply disallow any proposed membership change while any uncommitted change appears in the leader's log.
 
-To ensure that we do not attempt to commit two membership changes at
-once by matching log positions (which would be unsafe since they
-should have different quorum requirements), we simply disallow any
-proposed membership change while any uncommitted change appears in
-the leader's log.
-
-This approach introduces a problem when you try to remove a member
-from a two-member cluster: If one of the members dies before the
-other one receives the commit of the confchange entry, then the member
-cannot be removed any more since the cluster cannot make progress.
-For this reason it is highly recommended to use three or more nodes in
-every cluster.
+This approach introduces a problem when you try to remove a member from a two-member cluster: If one of the members dies before the other one receives the commit of the confchange entry, then the member cannot be removed any more since the cluster cannot make progress. For this reason it is highly recommended to use three or more nodes in every cluster.
 
 ### MessageType 消息类型
 
@@ -243,7 +220,7 @@ Package raft sends and receives message in Protocol Buffer format (defined in er
 
 'MessageType_MsgHup' is used for election. If a node is a follower or candidate, the 'tick' function in 'raft' struct is set as 'tickElection'. If a follower or candidate has not received any heartbeat before the election timeout, it passes 'MessageType_MsgHup' to its Step method and becomes (or remains) a candidate to start a new election.
 
->  `MessageType_MsgHup`用于选举。 如果节点是follower或candidate，则将`raft`结构中的"tick"函数设置为`tickElection`。如果follower或candidate在选举超时之前未收到任何心跳，它将`MessageType_MsgHup`传递给其Step方法，并成为（或保持）候选人来开始新的选举。
+>  `MessageType_MsgHup`用于选举。 如果节点是`follower`或`candidate`，则将`raft`结构中的`tick`函数设置为`tickElection`。如果follower或candidate在选举超时之前未收到任何心跳，它将`MessageType_MsgHup`传递给其`Step`方法，并成为（或保持）候选人来开始新的选举。
 
 'MessageType_MsgBeat' is an internal type that signals the leader to send a heartbeat of the 'MessageType_MsgHeartbeat' type. If a node is a leader, the 'tick' function in the 'raft' struct is set as 'tickHeartbeat', and triggers the leader to send periodic 'MessageType_MsgHeartbeat' messages to its followers.
 
@@ -278,11 +255,7 @@ If leader or candidate receives `MessageType_MsgRequestVote` with higher term, i
 
 > `MessageType_MsgRequestVoteResponse`包含来自投票请求的响应。当`MessageType_MsgRequestVoteResponse`被传递给candidate时，candidate会计算自己赢得了多少张选票。如果它大于majority  (quorum)，它就变成leader并调用`bcastAppend`。如果候选人获得了大多数的否决票，它就会回到追随者状态。
 
-'MessageType_MsgSnapshot' requests to install a snapshot message. When a node has just
-become a leader or the leader receives 'MessageType_MsgPropose' message, it calls
-'bcastAppend' method, which then calls 'sendAppend' method to each
-follower. In 'sendAppend', if a leader fails to get term or entries,
-the leader requests snapshot by sending 'MessageType_MsgSnapshot' type message.
+'MessageType_MsgSnapshot' requests to install a snapshot message. When a node has just become a leader or the leader receives 'MessageType_MsgPropose' message, it calls 'bcastAppend' method, which then calls 'sendAppend' method to each follower. In 'sendAppend', if a leader fails to get term or entries, the leader requests snapshot by sending 'MessageType_MsgSnapshot' type message.
 
 > 先略
 

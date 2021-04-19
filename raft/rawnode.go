@@ -84,13 +84,19 @@ type Ready struct {
 type RawNode struct {
 	Raft *Raft
 	// Your Data Here (2A).
+	ready *Ready
 }
 
 // NewRawNode returns a new RawNode given configuration and a list of raft peers.
 // 根据给定配置生成一个新的RawNode，上层用的
 func NewRawNode(config *Config) (*RawNode, error) {
 	// Your Code Here (2A).
-	return nil, nil
+	raft := newRaft(config)
+	rawNode := &RawNode{
+		Raft:  raft,
+		ready: nil,
+	}
+	return rawNode, nil
 }
 
 // Tick推进内部逻辑时钟一下，上层用的，也就是上层想啥时候tick就啥时候tick
@@ -99,7 +105,7 @@ func (rn *RawNode) Tick() {
 	rn.Raft.tick()
 }
 
-// Campaign使该RawNode转换到candidate状态。
+// Campaign使该RawNode转换到candidate状态。也就是它决定开始竞选
 // Campaign causes this RawNode to transition to candidate state.
 func (rn *RawNode) Campaign() error {
 	return rn.Raft.Step(pb.Message{
@@ -166,21 +172,43 @@ func (rn *RawNode) Step(m pb.Message) error {
 // Ready returns the current point-in-time state of this RawNode.
 func (rn *RawNode) Ready() Ready {
 	// Your Code Here (2A).
-	return Ready{}
+	if rn.ready == nil {
+		rn.ready = &Ready{}
+		// HardState
+		rn.ready.HardState = pb.HardState{}
+		rn.ready.HardState.Term = rn.Raft.Term
+		rn.ready.HardState.Vote = rn.Raft.Vote
+		rn.ready.HardState.Commit = rn.Raft.RaftLog.committed
+		// Entries
+		rn.ready.Entries = rn.Raft.RaftLog.unstableEntries()
+		// todo 2C 加Snapshot
+		// CommittedEntries
+		rn.ready.Entries = rn.Raft.RaftLog.nextEnts()
+		// Messages
+		rn.ready.Messages = rn.Raft.msgs
+	}
+	return *rn.ready
 }
 
 // HasReady在RawNode用户需要检查是否有ready在pending时被调用
 // HasReady called when RawNode user need to check if any Ready pending.
 func (rn *RawNode) HasReady() bool {
 	// Your Code Here (2A).
-	return false
+	return rn.ready != nil
 }
 
 // Advance通知RawNode: APP已经被提交并且保存状态了 in the last Ready results
 // Advance notifies the RawNode that the application has applied and saved progress in the
 // last Ready results.
+// `RawNode.Advance()`来更新raft的内部状态像`applied`、`stabled`等
 func (rn *RawNode) Advance(rd Ready) {
 	// Your Code Here (2A).
+	rn.Raft.msgs = make([]pb.Message, 0)
+	// 更新applied
+	rn.Raft.RaftLog.applied = rn.Raft.RaftLog.committed
+	// 更新stabled
+	rn.Raft.RaftLog.stabled = rn.Raft.RaftLog.LastIndex()
+	rn.ready = nil
 }
 
 // 获取进度

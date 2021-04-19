@@ -80,7 +80,7 @@ You can run `make project2ab` to test the implementation and see some hints at t
 
 `raft.RawNode` in `raft/rawnode.go` is the interface we interact with the upper application, `raft.RawNode` contains `raft.Raft` and provide some wrapper functions like `RawNode.Tick()`and `RawNode.Step()`. It also provides `RawNode.Propose()` to let the upper application propose new raft logs.
 
->`raft/rawNode.go`中的`raft.RawNode`是我们与上层应用通信的接口，`raft.RawNode`包含了`raft.Raft`并且提供了一些像`RawNode.Tick()`和`RawNode.Step()`之类的包装函数。它还提供了`RawNode.Propose`来让上层应用提供新的raft日志
+>`raft/rawNode.go`中的`raft.RawNode`是我们与上层应用通信的接口，`raft.RawNode`包含了`raft.Raft`并且提供了一些像`RawNode.Tick()`和`RawNode.Step()`之类的包装函数。它还提供了`RawNode.Propose`来让上层应用`propose`新的raft日志
 
 Another important struct `Ready` is also defined here. When handling messages or advancing the logical clock, the `raft.Raft` may need to interact with the upper application, like:
 
@@ -94,18 +94,17 @@ Another important struct `Ready` is also defined here. When handling messages or
 >
 > - 给其他peers发送消息
 > - 保存log entries到持久化存储
-> - 保存hard state像 the term, commit index, and vote到持久化存储
+> - 保存像 the term, commit index, and vote这样的hard state到持久化存储
 > - 应用已提交日志到状态机
 > - 等等
 
 But these interactions do not happen immediately, instead, they are encapsulated in `Ready` and returned by `RawNode.Ready()` to the upper application. It is up to the upper application when to call `RawNode.Ready()` and handle it.  After handling the returned `Ready`, the upper application also needs to call some functions like `RawNode.Advance()` to update `raft.Raft`'s internal state like the applied index, stabled log index, etc.
 
-> 但是这些交互不会立即发生，相反，它们被封装在`Ready`中，并由`RawNode.Ready()`返回给上层应用程序。何时调用`RawNode.Ready()`并处理它取决于上面的应用程序。处理完返回的`Ready`后，上面的应用程序还需要调用一些函数，如`RawNode.Advance()`来更新raft的内部状态like the applied 
-> index, stabled log index, etc。
+> 但是这些交互不会立即发生，相反，它们被封装在`Ready`中，并由`RawNode.Ready()`返回给上层应用程序。何时调用`RawNode.Ready()`并处理它取决于上面的应用程序。处理完返回的`Ready`后，上层应用程序还需要调用一些函数，如`RawNode.Advance()`来更新raft的内部状态像`applied`、`stabled`等
 
 You can run `make project2ac` to test the implementation and run `make project2a` to test the whole part A.
 
-> 您可以运行`make project2ac`来测试实现，运行`make project2a`来测试整个A部分。
+> 您可以运行`make project2ac`来测试实现，运行`make project2a`来测试整个project A。
 
 > Hints:
 >
@@ -120,14 +119,14 @@ You can run `make project2ac` to test the implementation and run `make project2a
 
 >Hints:
 >
->- Add any state you need to `raft.Raft`, `raft.RaftLog`, `raft.RawNode` and message on `eraftpb.proto` 可以向这几个结构体中加任何你需要的状态，可以向pb中加你需要的消息类型
->- 假定第一次启动raft应有term 0
+>- Add any state you need to `raft.Raft`, `raft.RaftLog`, `raft.RawNode` and message on `eraftpb.proto` 可以向这几个结构体中加任何你需要的状态，可以向pb中加你需要的消息
+>- 假定第一次启动raft应有`term=0`
 >- 假定新当选的领导人应在其任期内附加noop entry(no op没操作)
 >- 没有为本地消息设置term， `MessageType_MsgHup`, `MessageType_MsgBeat` and `MessageType_MsgPropose`.
 >- leader和non-leader的**日志条目的附加**有很大的不同，有不同的来源，检查和处理，要小心。
->- 别忘了选举超时时间应该是不同的。
+>- 别忘了对等体们的选举超时时间应该是不同的。
 >- Some wrapper functions in `rawnode.go` can implement with `raft.Step(local message)`
->- When starting a new raft, get the last stabled state from `Storage` to initialize `raft.Raft` and `raft.RaftLog` 当启动一个新的raft时，可以从`Storage`中获取上次退出时的持久化状态来初始`raft.Raft`和`raft.RaftLog`
+>- 当启动一个新的raft时，可以从`Storage`中获取上次退出时的持久化状态来初始`raft.Raft`和`raft.RaftLog`
 
 ### 看代码总结
 
