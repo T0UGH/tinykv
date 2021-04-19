@@ -183,7 +183,7 @@ func (rn *RawNode) Ready() Ready {
 		rn.ready.Entries = rn.Raft.RaftLog.unstableEntries()
 		// todo 2C 加Snapshot
 		// CommittedEntries
-		rn.ready.Entries = rn.Raft.RaftLog.nextEnts()
+		rn.ready.CommittedEntries = rn.Raft.RaftLog.nextEnts()
 		// Messages
 		rn.ready.Messages = rn.Raft.msgs
 	}

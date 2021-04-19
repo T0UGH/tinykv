@@ -80,7 +80,7 @@ func newLog(storage Storage) *RaftLog {
 	return &RaftLog{
 		storage:   storage,
 		entries:   entries,
-		applied:   0, //todo:初试值问题
+		applied:   0, //todo:初始值问题
 		committed: hardState.Commit,
 		stabled:   lastIndex,
 	}
@@ -107,13 +107,13 @@ func (l *RaftLog) unstableEntries() []pb.Entry {
 
 // 返回所有提交了但是还没applied的entries
 // nextEnts returns all the committed but not applied entries
-func (l *RaftLog) nextEnts() (ents []pb.Entry) {
+func (l *RaftLog) nextEnts() []pb.Entry {
 	// Your Code Here (2A).
 	unApplied := l.applied + 1
 	if unApplied > l.LastIndex() {
 		return make([]pb.Entry, 0)
 	}
-	return l.entries[l.applied+1 : l.committed+1]
+	return l.entries[unApplied : l.committed+1]
 }
 
 // 返回i之后的所有条目

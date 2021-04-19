@@ -195,7 +195,9 @@ func TestRawNodeRestart2AC(t *testing.T) {
 	st := pb.HardState{Term: 1, Commit: 1}
 
 	want := Ready{
-		Entries: []pb.Entry{},
+		// 不加这个过不了 // todo 确定一下是我的问题还是别人的问题
+		HardState: st,
+		Entries:   []pb.Entry{},
 		// commit up to commit index in st
 		CommittedEntries: entries[:st.Commit],
 	}
