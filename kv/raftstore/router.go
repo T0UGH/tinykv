@@ -57,6 +57,7 @@ func (pr *router) close(regionID uint64) {
 	}
 }
 
+// 发送, 向peerSender中写msg
 func (pr *router) send(regionID uint64, msg message.Msg) error {
 	msg.RegionID = regionID
 	p := pr.get(regionID)

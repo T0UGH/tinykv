@@ -7,6 +7,7 @@ import (
 	"github.com/pingcap/errors"
 )
 
+// 使用不同的前缀来对 Raft 以及 State Machine 等数据进行区分
 const (
 	// local is in (0x01, 0x02)
 	LocalPrefix byte = 0x01

@@ -43,6 +43,21 @@ func (d *peerMsgHandler) HandleRaftReady() {
 		return
 	}
 	// Your Code Here (2B).
+	rd := d.RaftGroup.Ready()
+	// todo 异常处理是否对
+	// 先保存后发送消息
+	_, err := d.peer.peerStorage.SaveReadyState(&rd)
+	if err != nil {
+		log.Error(err)
+		return
+	}
+
+	d.Send(d.ctx.trans, rd.Messages)
+	//todo 2c snapshot
+	for _, entry := range rd.CommittedEntries {
+		d.ApplyEntry(entry)
+	}
+	d.RaftGroup.Advance(rd)
 }
 
 func (d *peerMsgHandler) HandleMsg(msg message.Msg) {
@@ -72,11 +87,13 @@ func (d *peerMsgHandler) HandleMsg(msg message.Msg) {
 }
 
 func (d *peerMsgHandler) preProposeRaftCommand(req *raft_cmdpb.RaftCmdRequest) error {
+	// 检查store_id, 确保msg被分发到正确的地方
 	// Check store_id, make sure that the msg is dispatched to the right place.
 	if err := util.CheckStoreID(req, d.storeID()); err != nil {
 		return err
 	}
 
+	// 检查这个store是否有正确的peer来处理这个请求, 这个peer必须是leader才行
 	// Check whether the store has the right peer to handle the request.
 	regionID := d.regionId
 	leaderID := d.LeaderId()
@@ -84,14 +101,17 @@ func (d *peerMsgHandler) preProposeRaftCommand(req *raft_cmdpb.RaftCmdRequest) e
 		leader := d.getPeerFromCache(leaderID)
 		return &util.ErrNotLeader{RegionId: regionID, Leader: leader}
 	}
+	// 检查peer_id是否一致
 	// peer_id must be the same as peer's.
 	if err := util.CheckPeerID(req, d.PeerId()); err != nil {
 		return err
 	}
 	// Check whether the term is stale.
+	// 检查这个term是否已经过时
 	if err := util.CheckTerm(req, d.Term()); err != nil {
 		return err
 	}
+	// 检查regionEpoch
 	err := util.CheckRegionEpoch(req, d.Region(), true)
 	if errEpochNotMatching, ok := err.(*util.ErrEpochNotMatch); ok {
 		// Attach the region which might be split from the current region. But it doesn't
@@ -108,12 +128,26 @@ func (d *peerMsgHandler) preProposeRaftCommand(req *raft_cmdpb.RaftCmdRequest) e
 }
 
 func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *message.Callback) {
+	// 预Propose 可能就是检查检查是否合法之类的
 	err := d.preProposeRaftCommand(msg)
 	if err != nil {
 		cb.Done(ErrResp(err))
 		return
 	}
 	// Your Code Here (2B).
+	d.peer.proposals = append(d.peer.proposals, &proposal{
+		term:  msg.Header.Term,
+		index: d.NextIndex(),
+		cb:    cb,
+	})
+	data, err := msg.Marshal()
+	if err != nil {
+		panic(err)
+	}
+	if err := d.peer.RaftGroup.Propose(data); err != nil {
+		cb.Done(ErrResp(err))
+		return
+	}
 }
 
 func (d *peerMsgHandler) onTick() {
@@ -479,7 +513,7 @@ func (d *peerMsgHandler) validateSplitRegion(epoch *metapb.RegionEpoch, splitKey
 	}
 
 	if !d.IsLeader() {
-		// region on this store is no longer leader, skipped.
+		// `region` on this store is no longer leader, skipped.
 		log.Infof("%s not leader, skip", d.Tag)
 		return &util.ErrNotLeader{
 			RegionId: d.regionId,

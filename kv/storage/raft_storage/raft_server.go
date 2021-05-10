@@ -24,14 +24,16 @@ import (
 
 // RaftStorage is an implementation of `Storage` (see tikv/server.go) backed by a Raft node. It is part of a Raft network.
 // By using Raft, reads and writes are consistent with other nodes in the TinyKV instance.
+// RaftStorage是一个由Raft节点支持的`Storage`的实现。它是Raft网络的一部分。
+// 通过使用Raft，读写操作与TinyKV实例中的其他节点保持一致。
 type RaftStorage struct {
-	engines *engine_util.Engines
+	engines *engine_util.Engines //存储引擎
 	config  *config.Config
 
-	node          *raftstore.Node
+	node          *raftstore.Node //todo see
 	snapManager   *snap.SnapManager
-	raftRouter    *raftstore.RaftstoreRouter
-	raftSystem    *raftstore.Raftstore
+	raftRouter    *raftstore.RaftstoreRouter //todo see
+	raftSystem    *raftstore.Raftstore       //todo see
 	resolveWorker *worker.Worker
 	snapWorker    *worker.Worker
 
@@ -47,9 +49,11 @@ func (re *RegionError) Error() string {
 }
 
 func (rs *RaftStorage) checkResponse(resp *raft_cmdpb.RaftCmdResponse, reqCount int) error {
+	// 看看响应头中是否带了一个错误
 	if resp.Header.Error != nil {
 		return &RegionError{RequestErr: resp.Header.Error}
 	}
+	// 看看请求的数量是否和响应的数量相等
 	if len(resp.Responses) != reqCount {
 		return errors.Errorf("responses count %d is not equal to requests count %d",
 			len(resp.Responses), reqCount)
@@ -58,7 +62,9 @@ func (rs *RaftStorage) checkResponse(resp *raft_cmdpb.RaftCmdResponse, reqCount 
 }
 
 // NewRaftStorage creates a new storage engine backed by a raftstore.
+// 这里主要初始化引擎和set一下conf
 func NewRaftStorage(conf *config.Config) *RaftStorage {
+	// 用配置创建一个Engines
 	dbPath := conf.DBPath
 	kvPath := filepath.Join(dbPath, "kv")
 	raftPath := filepath.Join(dbPath, "raft")
@@ -109,11 +115,16 @@ func (rs *RaftStorage) Write(ctx *kvrpcpb.Context, batch []storage.Modify) error
 		Header:   header,
 		Requests: reqs,
 	}
+	// ↑上面这些统一理解为构建请求
+
+	// 构建一个Callback
 	cb := message.NewCallback()
+	// 发RaftCommand
 	if err := rs.raftRouter.SendRaftCommand(request, cb); err != nil {
 		return err
 	}
-
+	// Q: 这样岂不是要同步卡在这里了?
+	// 检查响应
 	return rs.checkResponse(cb.WaitResp(), len(reqs))
 }
 
@@ -132,11 +143,14 @@ func (rs *RaftStorage) Reader(ctx *kvrpcpb.Context) (storage.StorageReader, erro
 		}},
 	}
 	cb := message.NewCallback()
+	// 然RaftCMD
 	if err := rs.raftRouter.SendRaftCommand(request, cb); err != nil {
 		return nil, err
 	}
 
+	// 等回调
 	resp := cb.WaitResp()
+	// 检查响应
 	if err := rs.checkResponse(resp, 1); err != nil {
 		if cb.Txn != nil {
 			cb.Txn.Discard()
@@ -149,9 +163,13 @@ func (rs *RaftStorage) Reader(ctx *kvrpcpb.Context) (storage.StorageReader, erro
 	if len(resp.Responses) != 1 {
 		panic("wrong response count for snap cmd")
 	}
+	// 也就是Raft applied之后才能读
+	// 返回一个新的RegionReader来处理读
 	return NewRegionReader(cb.Txn, *resp.Responses[0].GetSnap().Region), nil
 }
 
+// Raft commands (tinykv <-> tinykv)
+// 可以参见 proto/proto/tinykvpb.proto:33
 func (rs *RaftStorage) Raft(stream tinykvpb.TinyKv_RaftServer) error {
 	for {
 		msg, err := stream.Recv()
@@ -176,19 +194,22 @@ func (rs *RaftStorage) Snapshot(stream tinykvpb.TinyKv_SnapshotServer) error {
 	return err
 }
 
+// 启动
 func (rs *RaftStorage) Start() error {
 	cfg := rs.config
+	// 新建一个调度器客户端, 目前没用，调度器不在project2中
 	schedulerClient, err := scheduler_client.NewClient(strings.Split(cfg.SchedulerAddr, ","), "")
 	if err != nil {
 		return err
 	}
+	// 初始化RaftStore和RaftSystem //todo see
 	rs.raftRouter, rs.raftSystem = raftstore.CreateRaftstore(cfg)
-
+	// 创建一个resolve工人
 	rs.resolveWorker = worker.NewWorker("resolver", &rs.wg)
 	resolveSender := rs.resolveWorker.Sender()
 	resolveRunner := newResolverRunner(schedulerClient)
 	rs.resolveWorker.Start(resolveRunner)
-
+	// 创建snapManager和snapWorker
 	rs.snapManager = snap.NewSnapManager(filepath.Join(cfg.DBPath, "snap"))
 	rs.snapWorker = worker.NewWorker("snap-worker", &rs.wg)
 	snapSender := rs.snapWorker.Sender()
@@ -196,8 +217,10 @@ func (rs *RaftStorage) Start() error {
 	rs.snapWorker.Start(snapRunner)
 
 	raftClient := newRaftClient(cfg)
+	// transport用于服务之间通信 //todo see
 	trans := NewServerTransport(raftClient, snapSender, rs.raftRouter, resolveSender)
 
+	// todo see
 	rs.node = raftstore.NewNode(rs.raftSystem, rs.config, schedulerClient)
 	err = rs.node.Start(context.TODO(), rs.engines, trans, rs.snapManager)
 	if err != nil {

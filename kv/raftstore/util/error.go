@@ -8,6 +8,7 @@ import (
 	"github.com/pingcap/errors"
 )
 
+// 不是leader
 type ErrNotLeader struct {
 	RegionId uint64
 	Leader   *metapb.Peer
@@ -17,6 +18,7 @@ func (e *ErrNotLeader) Error() string {
 	return fmt.Sprintf("region %v is not leader", e.RegionId)
 }
 
+// 没有找到Region
 type ErrRegionNotFound struct {
 	RegionId uint64
 }
@@ -25,6 +27,7 @@ func (e *ErrRegionNotFound) Error() string {
 	return fmt.Sprintf("region %v is not found", e.RegionId)
 }
 
+// Key不在Region内
 type ErrKeyNotInRegion struct {
 	Key    []byte
 	Region *metapb.Region
@@ -34,6 +37,7 @@ func (e *ErrKeyNotInRegion) Error() string {
 	return fmt.Sprintf("key %v is not in region %v", e.Key, e.Region)
 }
 
+// Epoch不匹配
 type ErrEpochNotMatch struct {
 	Message string
 	Regions []*metapb.Region
@@ -43,12 +47,14 @@ func (e *ErrEpochNotMatch) Error() string {
 	return fmt.Sprintf("epoch not match, error msg %v, regions %v", e.Message, e.Regions)
 }
 
+// 旧的命令
 type ErrStaleCommand struct{}
 
 func (e *ErrStaleCommand) Error() string {
 	return fmt.Sprintf("stale command")
 }
 
+// store不匹配
 type ErrStoreNotMatch struct {
 	RequestStoreId uint64
 	ActualStoreId  uint64

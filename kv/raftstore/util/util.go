@@ -70,7 +70,7 @@ func IsVoteMessage(msg *eraftpb.Message) bool {
 
 /// `is_first_vote_msg` checks `msg` is the first vote message or not. It's used for
 /// when the message is received but there is no such region in `Store::region_peers` and the
-/// region overlaps with others. In this case we should put `msg` into `pending_votes` instead of
+/// `region` overlaps with others. In this case we should put `msg` into `pending_votes` instead of
 /// create the peer.
 func IsFirstVoteMessage(msg *eraftpb.Message) bool {
 	return IsVoteMessage(msg) && msg.Term == meta.RaftInitLogTerm+1

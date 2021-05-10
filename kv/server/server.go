@@ -16,6 +16,8 @@ import (
 
 var _ tinykvpb.TinyKvServer = new(Server)
 
+// Server里面主要就是有一个Storage
+// Server是一个TinnyKV server, 它面向外部, 从像TinySQL这样的客户端发送和接收消息
 // Server is a TinyKV server, it 'faces outwards', sending and receiving messages from clients such as TinySQL.
 type Server struct {
 	storage storage.Storage

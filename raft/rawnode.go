@@ -205,9 +205,14 @@ func (rn *RawNode) Advance(rd Ready) {
 	// Your Code Here (2A).
 	rn.Raft.msgs = make([]pb.Message, 0)
 	// 更新applied
-	rn.Raft.RaftLog.applied = rn.Raft.RaftLog.committed
+	if len(rd.CommittedEntries) != 0 {
+		rn.Raft.RaftLog.applied = rd.CommittedEntries[len(rd.CommittedEntries)-1].Index
+	}
 	// 更新stabled
 	rn.Raft.RaftLog.stabled = rn.Raft.RaftLog.LastIndex()
+	if len(rd.Entries) != 0 {
+		rn.Raft.RaftLog.stabled = rd.Entries[len(rd.Entries)-1].Index
+	}
 	rn.ready = nil
 }
 

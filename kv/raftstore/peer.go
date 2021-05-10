@@ -2,6 +2,7 @@ package raftstore
 
 import (
 	"fmt"
+	"github.com/pingcap-incubator/tinykv/proto/pkg/raft_cmdpb"
 	"time"
 
 	"github.com/pingcap-incubator/tinykv/kv/config"
@@ -57,32 +58,43 @@ func replicatePeer(storeID uint64, cfg *config.Config, sched chan<- worker.Task,
 }
 
 type proposal struct {
-	// index + term for unique identification
+	// index + term for unique identification index+term 可以组成一个唯一标识符
 	index uint64
 	term  uint64
 	cb    *message.Callback
 }
 
+func (p *peer) findCallback(index, term uint64) *message.Callback {
+	for _, proposal := range p.proposals {
+		if proposal.term == term && proposal.index == index {
+			return proposal.cb
+		}
+	}
+	return nil
+}
+
 type peer struct {
 	// The ticker of the peer, used to trigger
+	// 这个peer的ticker, 用来触发
 	// * raft tick
 	// * raft log gc
 	// * region heartbeat
 	// * split check
 	ticker *ticker
-	// Instance of the Raft module
+	// Instance of the Raft module 一个Raft节点的实例
 	RaftGroup *raft.RawNode
-	// The peer storage for the Raft module
+	// The peer storage for the Raft module Raft节点的存储
 	peerStorage *PeerStorage
 
-	// Record the meta information of the peer
+	// Record the meta information of the peer 记录这个peer的元数据信息
 	Meta     *metapb.Peer
 	regionId uint64
 	// Tag which is useful for printing log
 	Tag string
 
-	// Record the callback of the proposals
+	// Record the callback of the proposals 记录proposals的cb
 	// (Used in 2B)
+	// todo 重大发现 可以把proposeRaftCommand的cb放到这里面懂了吧
 	proposals []*proposal
 
 	// Index of last scheduled compacted raft log.
@@ -92,6 +104,8 @@ type peer struct {
 	// Cache the peers information from other stores
 	// when sending raft messages to other peers, it's used to get the store id of target peer
 	// (Used in 3B conf change)
+	// 缓存从其他store获得的peers的信息
+	// 当向其他peers发送raft消息时, 它用来获取对应peer的store_id
 	peerCache map[uint64]*metapb.Peer
 	// Record the instants of peers being added into the configuration.
 	// Remove them after they are not pending any more.
@@ -273,6 +287,10 @@ func (p *peer) Send(trans Transport, msgs []eraftpb.Message) {
 	}
 }
 
+func (d *peerMsgHandler) NextIndex() uint64 {
+	return d.peer.RaftGroup.Raft.RaftLog.LastIndex() + 1
+}
+
 /// Collects all pending peers and update `peers_start_pending_time`.
 func (p *peer) CollectPendingPeers() []*metapb.Peer {
 	pendingPeers := make([]*metapb.Peer, 0, len(p.Region().GetPeers()))
@@ -389,4 +407,64 @@ func (p *peer) sendRaftMessage(msg eraftpb.Message, trans Transport) error {
 	}
 	sendMsg.Message = &msg
 	return trans.Send(sendMsg)
+}
+
+func (p *peer) ApplyEntry(ent eraftpb.Entry) {
+	// 先apply
+	var cmdReq raft_cmdpb.RaftCmdRequest
+	err := cmdReq.Unmarshal(ent.Data)
+	if err != nil {
+		panic(err)
+	}
+	resp := newCmdResp()
+	BindRespTerm(resp, ent.Term)
+	db := p.peerStorage.Engines.Kv
+	for _, req := range cmdReq.Requests {
+		switch req.CmdType {
+		case raft_cmdpb.CmdType_Get:
+			{
+				getReq := req.Get
+				val, err := engine_util.GetCF(db, getReq.Cf, getReq.Key)
+				if err != nil {
+					panic(err)
+				}
+				r := &raft_cmdpb.Response{
+					CmdType: req.CmdType,
+					Get:     &raft_cmdpb.GetResponse{Value: val},
+				}
+				resp.Responses = append(resp.Responses, r)
+			}
+		case raft_cmdpb.CmdType_Delete:
+			{
+				delReq := req.Delete
+				err := engine_util.DeleteCF(db, delReq.Cf, delReq.Key)
+				if err != nil {
+					panic(err)
+				}
+				r := &raft_cmdpb.Response{
+					CmdType: req.CmdType,
+					Delete:  &raft_cmdpb.DeleteResponse{},
+				}
+				resp.Responses = append(resp.Responses, r)
+			}
+		case raft_cmdpb.CmdType_Put:
+			{
+				putReq := req.Put
+				err := engine_util.PutCF(db, putReq.Cf, putReq.Key, putReq.Value)
+				if err != nil {
+					panic(err)
+				}
+				r := &raft_cmdpb.Response{
+					CmdType: req.CmdType,
+					Put:     &raft_cmdpb.PutResponse{},
+				}
+				resp.Responses = append(resp.Responses, r)
+			}
+		}
+	}
+	// 然后cb.Done
+	cb := p.findCallback(ent.Index, ent.Term)
+	if cb != nil {
+		cb.Done(resp)
+	}
 }

@@ -167,7 +167,7 @@ raft本身不负责直接发送rpc消息，也不负责直接写到持久化，�
 
 In this part, you will build a fault-tolerant key-value storage service using the Raft module implemented in part A.  Your key/value service will be a replicated state machine, consisting of several key/value servers that use Raft for replication. Your key/value service should continue to process client requests as long as a majority of the servers are alive and can communicate, despite other failures or network partitions.
 
-> 在本部分中，您将使用a部分中实现的Raft模块构建一个容错的键值存储服务。你的键/值服务将是一个复制的状态机，由几个使用Raft进行复制的键/值服务器组成。只要大多数服务器都是活的并且可以通信，您的key/value服务应该继续处理客户端请求，不管其他故障或网络分区。
+> 在本部分中，您将使用Part A中实现的Raft模块构建一个容错的键值存储服务。你的键/值服务将是一个复制的状态机(replicated state machine)，由几个使用Raft进行复制的键/值服务器组成。只要大多数服务器都是活的并且可以通信，您的key/value服务应该继续处理客户端请求，不管其他故障或网络分区。
 
 In project1 you have implemented a standalone kv server, so you should already be familiar with the kv server API and `Storage` interface.  
 
@@ -179,24 +179,52 @@ Before introducing the code, you need to understand three terms first: `Store`, 
 - Peer stands for a Raft node which is running on a Store
 - Region is a collection of Peers, also called Raft group
 
+> 在介绍代码之前，您首先需要理解三个术语:`Store`、`Peer`和`Region`，它们在`proto/proto/metapb.proto`中定义。
+>
+> - `Store`代表tinykv-server的一个实例(也就是说`Store`是服务器)
+> - `Peer`代表在`Store`上运行的Raft节点
+> - `Region`是`Peer`的集合，也可以叫做Raft Group
+
 ![region](imgs/region.png)
 
 For simplicity, there would be only one Peer on a Store and one Region in a cluster for project2. So you don’t need to consider the range of Region now. Multiple regions will be further introduced in project3.
+
+> 为简单起见，对于project2，一个`Store`上只有一个`Peer`，一个集群中只有一个`Region`。在project3中才会介绍多个regions
 
 ### The Code
 
 First, the code that you should take a look at is  `RaftStorage` located in `kv/storage/raft_storage/raft_server.go` which also implements the `Storage` interface. Unlike `StandaloneStorage` which directly writes or reads from the underlying engine, it first sends every write or read request to Raft, and then does actual write and read to the underlying engine after Raft commits the request. Through this way, it can keep the consistency between multiple Stores.
 
+> 首先，您应该查看的代码是`RaftStorage`，它在`kv/storage/raft_storage/raft_server.go`中，并且也实现`Storage`接口。与直接从底层引擎进行写或读操作的`StandaloneStorage`不同，它首先将每个写或读请求发送给Raft，然后在Raft提交请求(commit request)后对底层引擎进行实际的写和读操作。通过这种方式，可以保持多个存储之间的一致性。
+>
+> Q: 为什么读请求也要放到日志里面? 
+>
+> A: 如何优化读请求在Raft Paper的第八章中
+
 `RaftStorage` mainly creates a `Raftstore` to drive Raft.  When calling the `Reader` or `Write` function,  it actually sends a `RaftCmdRequest` defined in `proto/proto/raft_cmdpb.proto` with four basic command types(Get/Put/Delete/Snap) to raftstore by channel(the receiver of the channel is `raftCh` of  `raftWorker`) and returns the response after Raft commits and applies the command. And the `kvrpc.Context` parameter of `Reader` and `Write` function is useful now, it carries the Region information from the perspective of the client and is passed as the header of  `RaftCmdRequest`. Maybe the information is wrong or stale, so raftstore needs to check them and decide whether to propose the request.
+
+> `RaftStorage` 主要创建了一个 `Raftstore` 来驱动Raft。当调用`Reader`或者`Write`函数时，它实际上使用`channel`(`channel`的接收者是`raftWorker`的`raftCh`)发送了一个`RaftCmdRequest`(具有四个基本操作类型并且定义在`proto/proto/raft_cmdpb.proto`中)给`raftStore`，并且在Raft提交(commit)并应用(apply)这个命令后返回一个response。`Reader`和`Write`函数的`kvrpc.Context`现在有用了，它从客户端的角度携带`Region`信息并且被以`header`的形式传递给`RaftCmdRequest`。也许这些信息是错误的或陈旧的，所以`raftstore`需要检查这些信息，然后决定是否propose请求。
 
 Then, here comes the core of TinyKV — raftstore. The structure is a little complicated, you can read the reference of TiKV to give you a better understanding of the design:
 
 - <https://pingcap.com/blog-cn/the-design-and-implementation-of-multi-raft/#raftstore>  (Chinese Version)
 - <https://pingcap.com/blog/2017-08-15-multi-raft/#raftstore> (English Version)
 
+> 然后，介绍TinyKV的核心——raftstore。结构有点复杂，你可以阅读TiKV的参考资料，这有助于你更好的理解设计:
+>
+> - <https://pingcap.com/blog-cn/the-design-and-implementation-of-multi-raft/#raftstore>  (Chinese Version)
+> - <https://pingcap.com/blog/2017-08-15-multi-raft/#raftstore> (English Version)
+
 The entrance of raftstore is `Raftstore`, see `kv/raftstore/raftstore.go`.  It starts some workers to handle specific tasks asynchronously,  and most of them aren’t used now so you can just ignore them. All you need to focus on is `raftWorker`.(kv/raftstore/raft_worker.go)
 
+> raftstore的入口是`Raftstore`，可以参看`kv/raftstore/raftstore.go`。它启动一些worker来异步处理特定的任务，并且这些worker中的大多数现在还没有被使用，所以你可以忽略它们。你需要唯一需要关注的是`raftWorker` .(`kv/raftstore/raft_worker.go`)
+
 The whole process is divided into two parts: raft worker polls `raftCh` to get the messages, the messages include the base tick to drive Raft module and Raft commands to be proposed as Raft entries; it gets and handles ready from Raft module, including send raft messages, persist the state, apply the committed entries to the state machine. Once applied, return the response to clients.
+
+> 整个过程分为两个部分: 
+>
+> 1. Raft Worker 拉取 `raftCh`来获取消息，这些信息包括驱动raft模块的基本tick和作为entries的Raft命令；
+> 2. 它从Raft模块获取并处理`Ready`，包括发送Raft消息、持久化状态、将提交的条目应用到状态机。一旦应用，将响应返回给客户端。
 
 ### Implement peer storage
 
@@ -206,12 +234,25 @@ Peer storage is what you interact with through the `Storage` interface in part A
 - RaftApplyState: Used to store the last Log index that Raft applies and some truncated Log information.
 - RegionLocalState: Used to store Region information and the corresponding Peer state on this Store. Normal indicates that this Peer is normal, Applying means this Peer hasn’t finished the apply snapshot operation and Tombstone shows that this Peer has been removed from Region and cannot join in Raft Group.
 
+> Peer storage是part A中通过存储接口进行交互的内容，但是除了raft日志之外，peer storage还管理其他持久化的元数据，这对于重启后恢复一致的状态机非常重要。此外，在`proto/proto/raft_serverpb.proto`中定义了三种重要的状态:
+>
+> - `RaftLocalState`: 用来存储Raft最近的`HardState`和`last Log Index`
+> - `RaftApplyState`: Used to store the last Log index that Raft applies and some truncated Log information.
+> - `RegionLocalState`: 用于在这个存储区中存储`Region`信息和相应的`Peer`状态。`Normal`表示该`Peer`状态正常，`Applying`表示该`Peer`还没有完成`apply  snapshot`操作，`Tombstone`表示该`Peer`已经从Region中移除，不能加入Raft Group。
+
 These states are stored in two badger instances: raftdb and kvdb:
 
 - raftdb stores raft log and `RaftLocalState`
 - kvdb stores key-value data in different column families, `RegionLocalState` and `RaftApplyState`. You can regard kvdb as the state machine mentioned in Raft paper
 
+> 这些状态被存储到了两个`badger`实例中: `raftdb`和`kvdb`
+>
+> - `raftdb`存储raft log和`RaftLocalState`
+> - `kvdb`存储k-v数据到不同的列族中，还存储`RegionLocalState` and `RaftApplyState`。你可以认为kvdb就是论文中提到的状态机
+
 The format is as below and some helper functions are provided in `kv/raftstore/meta`, and set them to badger with `writebatch.SetMeta()`.
+
+> 格式如下，在`kv/raftstore/meta`中提供了一些辅助函数，并使用`writebatch.SetMeta()`将它们设置到badger中。
 
 | Key            | KeyFormat                      | Value          | DB |
 |:----           |:----                           |:----           |:---|
@@ -221,32 +262,62 @@ The format is as below and some helper functions are provided in `kv/raftstore/m
 |region_state_key|0x01 0x03 region_id 0x01        |RegionLocalState|kv  |
 
 > You may wonder why TinyKV needs two badger instances. Actually, it can use only one badger to store both raft log and state machine data. Separating into two instances is just to be consistent with TiKV design.
+>
+> 您可能想知道为什么TinyKV需要两个badger实例。实际上，它可以只用一个badger来存储raft日志和状态机数据。划分为两个实例只是为了与TiKV的设计相一致。
 
-These metadatas should be created and updated in `PeerStorage`. When creating PeerStorage, see `kv/raftstore/peer_storage.go`. It initializes RaftLocalState, RaftApplyState of this Peer, or gets the previous value from the underlying engine in the case of restart. Note that the value of both RAFT_INIT_LOG_TERM and RAFT_INIT_LOG_INDEX is 5 (as long as it's larger than 1) but not 0. The reason why not set it to 0 is to distinguish with the case that peer created passively after conf change. You may not quite understand it now, so just keep it in mind and the detail will be described in project3b when you are implementing conf change.
+These metadatas(就是前面提到的三个State结尾的结构体) should be created and updated in `PeerStorage`. When creating PeerStorage, see `kv/raftstore/peer_storage.go`. It initializes RaftLocalState, RaftApplyState of this Peer, or gets the previous value from the underlying engine in the case of restart. Note that the value of both RAFT_INIT_LOG_TERM and RAFT_INIT_LOG_INDEX is 5 (as long as it's larger than 1) but not 0. The reason why not set it to 0 is to distinguish with the case that peer created passively after conf change. You may not quite understand it now, so just keep it in mind and the detail will be described in project3b when you are implementing conf change.
+
+> 这些元数据应该在`PeerStorage`中创建和更新。当创建`PeerStorage`时，请参见`kv/raftstore/peer_storage.go`。它初始化该`Peer`的`RaftLocalState`和`RaftApplyState`，或者在重启的情况下从底层引擎获取之前的值。注意，`RAFT_INIT_LOG_TERM`和`RAFT_INIT_LOG_INDEX`的值都是5(只要大于1)，但不是0。不设为0的原因是为了区别conf更改后，peer被动创建的情况。你现在可能还不太明白，所以只要记住它，当你实现conf更改时，细节将在project3b中描述。
 
 The code you need to implement in this part is only one function:  `PeerStorage.SaveReadyState`, what this function does is to save the data in `raft.Ready` to badger, including append log entries and save the Raft hard state.
 
+> 在本部分中需要实现的代码只有一个函数:`PeerStorage.SaveReadyState`，这个函数的作用是将`raft.Ready`中的数据保存到`badger`中，包括追加log entries和保存Raft hardState。
+
 To append log entries, simply save all log entries at `raft.Ready.Entries` to raftdb and delete any previously appended log entries which will never be committed. Also, update the peer storage’s `RaftLocalState` and save it to raftdb.
+
+> 要追加日志条目，只需将所有在`raft.Ready.Entries`中的日志条目保存到`raftdb`，并删除以前追加的永远不会提交的日志条目。另外，更新peer storage的`RaftLocalState`并将其保存到`raftdb`。
 
 To save the hard state is also very easy, just update peer storage’s `RaftLocalState.HardState` and save it to raftdb.
 
+> 保存hard state也很简单，只需更新对等存储的`RaftLocalState.HardState`，并保存到raftdb中。
+
 > Hints:
 >
-> - Use `WriteBatch` to save these states at once.
+> - Use `WriteBatch` to save these states at once. 
 > - See other functions at `peer_storage.go` for how to read and write these states.
+>
+> Hints:
+>
+> - 使用`WriteBatch`来原子存储这些状态
+> - 可以查看`peer_storage.go`的其他函数来知道如何读写这些状态
 
-### Implement Raft ready process
+### Implement Raft ready process 实现Raft ready的处理
 
 In project2 part A, you have built a tick-based Raft module. Now you need to write the outer process to drive it. Most of the code is already implemented under `kv/raftstore/peer_msg_handler.go` and `kv/raftstore/peer.go`.  So you need to learn the code and finish the logic of `proposeRaftCommand` and `HandleRaftReady`. Here are some interpretations of the framework.
 
+> 在project2 part A中，您已经构建了一个基于tick的Raft模块。现在您需要编写一个外部流程(outer process)来驱动它。大部分代码已经在`kv/raftstore/peer_msg_handler.go`和`kv/raftstore/peer.go`下实现了。因此，您需要学习代码并完成`proposeRaftCommand`和`HandleRaftReady`的逻辑。以下是对该框架的一些解释。
+
 The Raft `RawNode` is already created with `PeerStorage` and stored in `peer`. In the raft worker, you can see that it takes the `peer` and wraps it by `peerMsgHandler`.  The `peerMsgHandler` mainly has two functions: one is `HandleMsgs` and the other is `HandleRaftReady`.
 
+> `RawNode`已经和`PeerStorage`一起被创建并存储在`peer`中。在raft worker中，您可以看到它获取peer并通过`peerMsgHandler`封装了。`peerMsgHandler`主要有两个函数:一个是`HandleMsgs`，另一个是`HandleRaftReady`。
+
 `HandleMsgs` processes all the messages received from raftCh, including `MsgTypeTick` which calls `RawNode.Tick()`  to drive the Raft, `MsgTypeRaftCmd` which wraps the request from clients and `MsgTypeRaftMessage` which is the message transported between Raft peers. All the message types are defined in `kv/raftstore/message/msg.go`. You can check it for detail and some of them will be used in the following parts.
+
+> ``HandleMsgs`处理所有从`raftCh`收到的消息，包括：
+>
+> - `MsgTypeTick`，它调用`RawNode.Tick()`来驱动raft；
+> - `MsgTypeRaftCmd`，它包装来自客户端的请求；
+> - `MsgTypeRaftMessage`, 它是Raft对等体之间传输的消息。
+> - 所有的消息类型都在`kv/raftstore/message/msg.go`中定义。你可以查看它的细节，其中一些将在下面的部分中使用。
 
 After the message is processed, the Raft node should have some state updates. So `HandleRaftReady` should get the ready from Raft module and do corresponding actions like persisting log entries, applying committed entries
 and sending raft messages to other peers through the network.
 
+> 处理完消息后，raft节点应该更新了一些状态。因此，`HandleRaftReady`应该从Raft模块获取`Ready`，并执行相应的操作，如持久化日志条目、应用已提交的条目和通过网络向其他对等节点发送Raft消息。
+
 In a pseudocode, the raftstore uses Raft like:
+
+> 在伪代码中，raftstore向下面这样使用Raft
 
 ``` go
 for {
@@ -278,16 +349,39 @@ After this the whole process of a read or write would be like this:
 - `RaftStorage` receive the response from callback and returns to RPC handler
 - RPC handler does some actions and returns the RPC response to clients.
 
+> 读或写的整个过程是这样的:
+>
+> - 客户端调用RPC `RawGet`/`RawPut`/`RawDelete`/`RawScan`
+> - RPC处理程序调用与`RaftStorage`相关的方法
+> - `RaftStorage`向raftstore发送一个Raft命令请求，并等待响应
+> - `RaftStore` propose这个Raft指令请求作为一个raft日志
+> - Raft模块追加日志，并通过`PeerStorage`持久化
+> - Raft模块提交日志
+> - Raft worker在处理`Ready`时处理这个Raft指令，并通过回调返回response
+> - `RaftStorage`从回调接收响应并返回给RPC处理程序
+> - RPC处理程序执行一些操作并将RPC响应返回给客户端。
+
 You should run `make project2b` to pass all the tests. The whole test is running a mock cluster including multiple TinyKV instances with a mock network. It performs some read and write operations and checks whether the return values are as expected.
+
+> 您应该运行`make project2b`以通过所有测试。整个测试运行一个模拟集群，其中包括多个TinyKV实例和一个模拟网络。它执行一些读和写操作，并检查返回值是否如预期的那样。
 
 To be noted, error handling is an important part of passing the test. You may have already noticed that there are some errors defined in `proto/proto/errorpb.proto` and the error is a field of the gRPC response. Also, the corresponding errors which implement the`error` interface are defined in `kv/raftstore/util/error.go`, so you can use them as a return value of functions.
 
+> 需要注意的是，错误处理是通过测试的重要部分。您可能已经注意到`proto/proto/errorpb.proto`中定义了一些错误。错误是gRPC响应的一个字段。在`kv/raftstore/util/error`中定义了实现错误接口的相应错误。这样你就可以把它们用作函数的返回值。
+
 These errors are mainly related to Region. So it is also a member of `RaftResponseHeader` of `RaftCmdResponse`. When proposing a request or applying a command, there may be some errors. If that, you should return the raft command response with the error, then the error will be further passed to gRPC response. You can use `BindErrResp` provided in `kv/raftstore/cmd_resp.go` to convert these errors to errors defined in `errorpb.proto` when returning the response with an error.
+
+> 这些错误主要与`Region`有关。所以它也是`RaftCmdResponse`的`RaftResponseHeader`成员。在提出请求或应用命令时，可能会出现一些错误。如果是这样，您应该返回带有错误的raft命令响应，然后该错误将进一步传递给gRPC响应。You can use `BindErrResp` provided in `kv/raftstore/cmd_resp.go` to convert these errors to errors defined in `errorpb.proto` when returning the response with an error.
 
 In this stage, you may consider these errors, and others will be processed in project3:
 
-- ErrNotLeader: the raft command is proposed on a follower. so use it to let the client try other peers.
-- ErrStaleCommand: It may due to leader changes that some logs are not committed and overrided with new leaders’ logs. But the client doesn’t know that and is still waiting for the response. So you should return this to let the client knows and retries the command again.
+- `ErrNotLeader`: the raft command is proposed on a follower. so use it to let the client try other peers.
+- `ErrStaleCommand`: It may due to leader changes that some logs are not committed and overrided with new leaders’ logs. But the client doesn’t know that and is still waiting for the response. So you should return this to let the client knows and retries the command again.
+
+> 在这个阶段，你可以考虑这些错误，其他错误将在project3中处理:
+>
+> - `ErrNotLeader`:在follower上propose了raft命令。因此，使用它来让客户机尝试其他peer。
+> - `ErrStaleCommand`: 可能由于leader的变更，一些日志没有提交，被新的leader的日志覆盖。但是客户端并不知道这一点，仍然在等待响应。因此，您应该返回该值以让客户端知道并再次重试该命令。
 
 > Hints:
 >
@@ -299,6 +393,31 @@ In this stage, you may consider these errors, and others will be processed in pr
 > - You can apply the committed Raft log entries in an asynchronous way just like TiKV does. It’s not necessary, though a big challenge to improve performance.
 > - Record the callback of the command when proposing, and return the callback after applying.
 > - For the snap command response, should set badger Txn to callback explicitly.
+>
+> Hints:
+>
+> - `PeerStorage`实现了Raft模块的`Storage`接口，你应该使用提供的方法`SaveRaftReady()`来持久化Raft相关的状态
+> - 在`engine_util`中使用`WriteBatch`以原子方式进行多次写入，例如，您需要确保原子地apply一些提交了的日志并且更新applied index
+> - 使用`Transport`发送raft消息到其他对等体，它是在`GlobalContext`中。
+> - 如果服务器不是大多数并且没有最新的数据(up-to-date data)，那么它就不应该完成get RPC。您可以只是简单地将get操作放入raft日志中，或者实现raft论文第8节中描述的只读操作的优化。
+> - 在应用日志项时，不要忘记更新和保持apply state。
+> - 您可以像TiKV那样以异步方式apply已提交的Raft日志条目。虽然这不是必须的，但却是提高性能的一大挑战。
+> - 在proposing时记录命令的回调，并在applying后返回回调。
+> - For the snap command response, should set badger Txn to callback explicitly.
+
+
+
+### Q&A
+
+
+
+Q: Node的作用
+
+Q: 看这里kv/storage/raft_storage/raft_server.go:84，每个batch中会有很多req，但是仔细一看,这些cmd并不需要保证它们加在一起是并发的
+
+Q; 看getMeta kv/util/engine_util/util.go:42，说明其实entries是用meta存的
+
+TIP: 可以使用pb中的marshell和UnMarshell来编码解码
 
 ## Part C
 

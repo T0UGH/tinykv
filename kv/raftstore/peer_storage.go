@@ -30,26 +30,35 @@ type ApplySnapResult struct {
 
 var _ raft.Storage = new(PeerStorage)
 
+// 单个Peer的存储, 一个RaftStore需要管理多个peer
 type PeerStorage struct {
 	// current region information of the peer
+	// 这个peer的当前region信息
 	region *metapb.Region
 	// current raft state of the peer
+	// 这个peer的当前raft状态
 	raftState *rspb.RaftLocalState
 	// current apply state of the peer
+	// 这个peer的当前apply状态
 	applyState *rspb.RaftApplyState
 
 	// current snapshot state
+	// 当前snapshot状态
 	snapState snap.SnapState
-	// regionSched used to schedule task to region worker
+	// 用来向region worker传递任务
+	/* used to schedule task to region worker*/
 	regionSched chan<- worker.Task
 	// generate snapshot tried count
+	// 尝试了多少次产生快照
 	snapTriedCnt int
 	// Engine include two badger instance: Raft and Kv
+	// Engine中包括了两个badger实例: Raft和Kv
 	Engines *engine_util.Engines
 	// Tag used for logging
 	Tag string
 }
 
+// 从engines中获取持久化的raftState并且返回一个PeerStorage
 // NewPeerStorage get the persist raftState from engines and return a peer storage
 func NewPeerStorage(engines *engine_util.Engines, region *metapb.Region, regionSched chan<- worker.Task, tag string) (*PeerStorage, error) {
 	log.Debugf("%s creating storage for %s", tag, region.String())
@@ -304,10 +313,19 @@ func ClearMeta(engines *engine_util.Engines, kvWB, raftWB *engine_util.WriteBatc
 	return nil
 }
 
+// 将给定的entries添加到raftlog中并且更新ps.raftSate
+// 并且要删除掉那些永远不会被提交的log entries
 // Append the given entries to the raft log and update ps.raftState also delete log entries that will
 // never be committed
 func (ps *PeerStorage) Append(entries []eraftpb.Entry, raftWB *engine_util.WriteBatch) error {
 	// Your Code Here (2B).
+	for _, entry := range entries {
+		key := meta.RaftLogKey(ps.region.Id, entry.Index)
+		if err := raftWB.SetMeta(key, &entry); err != nil {
+			return err
+		}
+	}
+	//todo: 这里先不考虑删除的情况, 因为处理起来过于麻烦了
 	return nil
 }
 
@@ -326,11 +344,33 @@ func (ps *PeerStorage) ApplySnapshot(snapshot *eraftpb.Snapshot, kvWB *engine_ut
 	return nil, nil
 }
 
+// 将内存中的状态保存到硬盘
+// 不要在这个函数中修改ready,这是稍后正确推进ready对象的需要
 // Save memory states to disk.
 // Do not modify ready in this function, this is a requirement to advance the ready object properly later.
 func (ps *PeerStorage) SaveReadyState(ready *raft.Ready) (*ApplySnapResult, error) {
 	// Hint: you may call `Append()` and `ApplySnapshot()` in this function
 	// Your Code Here (2B/2C).
+	wb := new(engine_util.WriteBatch)
+	// 1 append log entries
+	if err := ps.Append(ready.Entries, wb); err != nil {
+		return nil, err
+	}
+	// 2 update State
+	if len(ready.Entries) > 0 {
+		lastEntry := ready.Entries[len(ready.Entries)-1]
+		ps.raftState.LastIndex = lastEntry.Index
+		ps.raftState.LastTerm = lastEntry.Term
+	}
+	hs := ps.raftState.HardState
+	hs.Term, hs.Commit, hs.Vote = ready.Term, ready.Commit, ready.Vote
+	// 3 save state
+	if err := wb.SetMeta(meta.RaftStateKey(ps.region.Id), ps.raftState); err != nil {
+		return nil, err
+	}
+	if err := ps.Engines.WriteRaft(wb); err != nil {
+		return nil, err
+	}
 	return nil, nil
 }
 
