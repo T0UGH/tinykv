@@ -68,7 +68,7 @@ type Config struct {
 	// 它应该只能在开启一个新的raft集群时被设置
 	// 从之前的配置重启raft将会产生一个panic
 	// peer是私有的并且只用于测试
-	peers []uint64
+	Peers []uint64
 
 	// ElectionTick is the number of Node.Tick invocations that must pass between
 	// elections. That is, if a follower does not receive any message from the
@@ -156,7 +156,7 @@ type Raft struct {
 	// todo: 为啥不需要它
 	peers []uint64
 
-	// 记录了所有followers的进度
+	// 记录了所有peers的进度
 	// log replication progress of each peers
 	Prs map[uint64]*Progress
 
@@ -227,7 +227,11 @@ func newRaft(c *Config) *Raft {
 	// Your Code Here (2A).
 	raft := &Raft{}
 	raft.id = c.ID
-	raft.peers = c.peers
+	raft.peers = c.Peers
+	raft.Prs = make(map[uint64]*Progress)
+	for _, id := range raft.peers {
+		raft.Prs[id] = &Progress{}
+	}
 	// todo: 什么时候考虑从disk中恢复数据
 	raft.State = StateFollower
 	raft.roleMap = InitRoleMap(raft)
@@ -256,6 +260,7 @@ func (r *Raft) sendAppend(to uint64) bool {
 	}
 	entries, _ := r.RaftLog.Entries(r.Prs[to].Next, r.RaftLog.LastIndex()+1)
 	msg.Entries = ConvertEntryPointerSlice(entries)
+	// todo bug 这个地方Next=0然后就越界了
 	msg.Index = r.Prs[to].Next - 1
 	msg.LogTerm, _ = r.RaftLog.Term(msg.Index)
 	msg.Commit = r.RaftLog.committed
@@ -287,7 +292,9 @@ func (r *Raft) becomeFollower(term uint64, lead uint64) {
 	r.Lead = lead
 	r.resetElectionClock()
 	// 清空进度
-	r.Prs = make(map[uint64]*Progress)
+	for i := range r.Prs {
+		r.Prs[i] = &Progress{}
+	}
 }
 
 // becomeCandidate transform this peer's state to candidate
@@ -307,7 +314,9 @@ func (r *Raft) becomeCandidate() {
 	// todo 此外 收到心跳的时候也要resetElectionCLock 此外外 becomeFollower时也需要重置Election时钟
 	r.resetElectionClock()
 	// 清空进度
-	r.Prs = make(map[uint64]*Progress)
+	for i := range r.Prs {
+		r.Prs[i] = &Progress{}
+	}
 }
 
 // becomeLeader将节点的状态改为Leader
@@ -321,7 +330,6 @@ func (r *Raft) becomeLeader() {
 	// 3 自己就是Lead
 	r.Lead = r.id
 	// 4 初始化Prs
-	r.Prs = make(map[uint64]*Progress)
 	for _, id := range r.peers {
 		if id == r.id {
 			r.Prs[id] = &Progress{

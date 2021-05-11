@@ -149,6 +149,7 @@ func (c *Cluster) Shutdown() {
 	for _, dir := range c.dirs {
 		os.RemoveAll(dir)
 	}
+	log.Infof("done")
 }
 
 func (c *Cluster) AddFilter(filter Filter) {

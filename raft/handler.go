@@ -334,8 +334,16 @@ func (h *MsgAppendResponseHandler) Handle(m pb.Message) error {
 	// 1 如果 reject了 就把Next-1然后再发一遍
 	// 这里多一个判断条件是为了防止连发两个false的情况出现
 	if m.GetReject() == true {
+		// 老领导直接停
+		if m.GetTerm() > h.raft.Term {
+			return nil
+		}
 		if m.GetIndex()+1 == h.raft.Prs[m.GetFrom()].Next {
 			h.raft.Prs[m.GetFrom()].Next--
+			// 如果一直失败到过界, 就不发了
+			if h.raft.Prs[m.GetFrom()].Next < h.raft.RaftLog.FirstIndex() {
+				return nil
+			}
 			h.raft.sendAppend(m.GetFrom())
 		}
 		return nil

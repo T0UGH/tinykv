@@ -136,7 +136,7 @@ func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *
 	}
 	// Your Code Here (2B).
 	d.peer.proposals = append(d.peer.proposals, &proposal{
-		term:  msg.Header.Term,
+		term:  d.Term(),
 		index: d.NextIndex(),
 		cb:    cb,
 	})

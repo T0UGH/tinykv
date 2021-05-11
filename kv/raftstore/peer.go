@@ -2,6 +2,7 @@ package raftstore
 
 import (
 	"fmt"
+	"github.com/Connor1996/badger"
 	"github.com/pingcap-incubator/tinykv/proto/pkg/raft_cmdpb"
 	"time"
 
@@ -94,7 +95,7 @@ type peer struct {
 
 	// Record the callback of the proposals 记录proposals的cb
 	// (Used in 2B)
-	// todo 重大发现 可以把proposeRaftCommand的cb放到这里面懂了吧
+	// 把CmdRequest的cb放到这里面
 	proposals []*proposal
 
 	// Index of last scheduled compacted raft log.
@@ -139,12 +140,18 @@ func NewPeer(storeId uint64, cfg *config.Config, engines *engine_util.Engines, r
 
 	appliedIndex := ps.AppliedIndex()
 
+	peers := make([]uint64, 0)
+	for _, pr := range region.Peers {
+		peers = append(peers, pr.Id)
+	}
+
 	raftCfg := &raft.Config{
 		ID:            meta.GetId(),
 		ElectionTick:  cfg.RaftElectionTimeoutTicks,
 		HeartbeatTick: cfg.RaftHeartbeatTicks,
 		Applied:       appliedIndex,
 		Storage:       ps,
+		Peers:         peers,
 	}
 
 	raftGroup, err := raft.NewRawNode(raftCfg)
@@ -419,6 +426,7 @@ func (p *peer) ApplyEntry(ent eraftpb.Entry) {
 	resp := newCmdResp()
 	BindRespTerm(resp, ent.Term)
 	db := p.peerStorage.Engines.Kv
+	var txn *badger.Txn
 	for _, req := range cmdReq.Requests {
 		switch req.CmdType {
 		case raft_cmdpb.CmdType_Get:
@@ -460,11 +468,24 @@ func (p *peer) ApplyEntry(ent eraftpb.Entry) {
 				}
 				resp.Responses = append(resp.Responses, r)
 			}
+		case raft_cmdpb.CmdType_Snap:
+			{
+				txn = p.peerStorage.Engines.Kv.NewTransaction(false)
+				r := &raft_cmdpb.Response{
+					CmdType: req.CmdType,
+					Snap:    &raft_cmdpb.SnapResponse{Region: p.peerStorage.region},
+				}
+				resp.Responses = append(resp.Responses, r)
+			}
 		}
+
 	}
 	// 然后cb.Done
 	cb := p.findCallback(ent.Index, ent.Term)
 	if cb != nil {
+		if txn != nil {
+			cb.Txn = txn
+		}
 		cb.Done(resp)
 	}
 }

@@ -28,6 +28,7 @@ func runClient(t *testing.T, me int, ca chan bool, fn func(me int, t *testing.T)
 	ok = true
 }
 
+// 生成ncli个客户端并等待它们全部完成
 // spawn ncli clients and wait until they are all done
 func SpawnClientsAndWait(t *testing.T, ch chan bool, ncli int, fn func(me int, t *testing.T)) {
 	defer func() { ch <- true }()
@@ -97,6 +98,7 @@ func checkConcurrentAppends(t *testing.T, v string, counts []int) {
 	}
 }
 
+// 周期性的重新分区server
 // repartition the servers periodically
 func partitioner(t *testing.T, cluster *Cluster, ch chan bool, done *int32, unreliable bool, electionTimeout time.Duration) {
 	defer func() { ch <- true }()
@@ -152,8 +154,16 @@ func confchanger(t *testing.T, cluster *Cluster, ch chan bool, done *int32) {
 // - If crash is set, the servers restart after the period is over.
 // - If partitions is set, the test repartitions the network concurrently between the servers.
 // - If maxraftlog is a positive number, the count of the persistent log for Raft shouldn't exceed 2*maxraftlog.
-// - If confchangee is set, the cluster will schedule random conf change concurrently.
+// - If confchange is set, the cluster will schedule random conf change concurrently.
 // - If split is set, split region when size exceed 1024 bytes.
+// 基本测试如下：一个或多个客户端在一段时间内向服务器集群提交Put/Scan操作。
+// period结束后，测试将检查所有顺序值是否存在以及是否有特定的键，然后执行Delete进行清理。
+// - 如果设置了 unreliable, RPC有可能失败
+// - 如果设置了crash, 服务器们会在period结束后重启
+// - 如果设置了partitions, 测试将重新分区网络
+// - 如果maxraftlog是一个正数, 持久化的日志不能超过maxraftlog的2倍
+// - 如果confchange被设置, 集群将并发地调度随机conf change
+// - 如果split被设置, 当size超过1024时会split region
 func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash bool, partitions bool, maxraftlog int, confchange bool, split bool) {
 	title := "Test: "
 	if unreliable {
@@ -180,6 +190,7 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 
 	nservers := 5
 	cfg := config.NewTestConfig()
+	// 如果传入的maxraftlog不是-1就在cfg里面设置一下
 	if maxraftlog != -1 {
 		cfg.RaftLogGcCountLimit = uint64(maxraftlog)
 	}
@@ -187,6 +198,7 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 		cfg.RegionMaxSize = 300
 		cfg.RegionSplitSize = 200
 	}
+	// 启动测试集群
 	cluster := NewTestCluster(nservers, cfg)
 	cluster.Start()
 	defer cluster.Shutdown()
@@ -201,6 +213,7 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 	ch_partitioner := make(chan bool)
 	ch_confchange := make(chan bool)
 	ch_clients := make(chan bool)
+	// 造几个chan
 	clnts := make([]chan int, nclients)
 	for i := 0; i < nclients; i++ {
 		clnts[i] = make(chan int, 1)
@@ -209,17 +222,21 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 		// log.Printf("Iteration %v\n", i)
 		atomic.StoreInt32(&done_clients, 0)
 		atomic.StoreInt32(&done_partitioner, 0)
+		// 生成ncli个客户端并等待它们全部完成
 		go SpawnClientsAndWait(t, ch_clients, nclients, func(cli int, t *testing.T) {
 			j := 0
+			// 结束的时候把j传回chan
 			defer func() {
 				clnts[cli] <- j
 			}()
 			last := ""
 			for atomic.LoadInt32(&done_clients) == 0 {
+				// 随机走下面的if-else
 				if (rand.Int() % 1000) < 500 {
 					key := strconv.Itoa(cli) + " " + fmt.Sprintf("%08d", j)
 					value := "x " + strconv.Itoa(cli) + " " + strconv.Itoa(j) + " y"
 					// log.Infof("%d: client new put %v,%v\n", cli, key, value)
+					// 调用cluster的Put, 把这个k-v放进去
 					cluster.MustPut([]byte(key), []byte(value))
 					last = NextValue(last, value)
 					j++
@@ -227,8 +244,10 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 					start := strconv.Itoa(cli) + " " + fmt.Sprintf("%08d", 0)
 					end := strconv.Itoa(cli) + " " + fmt.Sprintf("%08d", j)
 					// log.Infof("%d: client new scan %v-%v\n", cli, start, end)
+					// scan k v
 					values := cluster.Scan([]byte(start), []byte(end))
 					v := string(bytes.Join(values, []byte("")))
+					// 检查检查值对不对
 					if v != last {
 						log.Fatalf("get wrong value, client %v\nwant:%v\ngot: %v\n", cli, last, v)
 					}
@@ -237,6 +256,7 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 		})
 
 		if partitions {
+			// 允许客户端执行一些操作不立刻中断
 			// Allow the clients to perform some operations without interruption
 			time.Sleep(300 * time.Millisecond)
 			go partitioner(t, cluster, ch_partitioner, &done_partitioner, unreliable, electionTimeout)
@@ -280,6 +300,7 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 			}
 		}
 
+		// 检查一波然后删除
 		for cli := 0; cli < nclients; cli++ {
 			// log.Printf("read from clients %d\n", cli)
 			j := <-clnts[cli]
@@ -339,6 +360,7 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 			}
 		}
 	}
+	log.Infof("done")
 }
 
 func TestBasic2B(t *testing.T) {
