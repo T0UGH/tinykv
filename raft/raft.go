@@ -257,9 +257,13 @@ func (r *Raft) sendAppend(to uint64) bool {
 		Term:    r.Term,
 		From:    r.id,
 	}
-	entries, _ := r.RaftLog.Entries(r.Prs[to].Next, r.RaftLog.LastIndex()+1)
+	entries, err := r.RaftLog.Entries(r.Prs[to].Next, r.RaftLog.LastIndex()+1)
+	// 如果过界, 就改成发snapshot
+	if err == ErrCompacted {
+		r.sendSnapshot(to)
+		return true
+	}
 	msg.Entries = ConvertEntryPointerSlice(entries)
-	// todo bug 这个地方Next=0然后就越界了
 	msg.Index = r.Prs[to].Next - 1
 	msg.LogTerm, _ = r.RaftLog.Term(msg.Index)
 	msg.Commit = r.RaftLog.committed
@@ -435,13 +439,27 @@ func (r *Raft) updateAndBroadCastCommitProgress() {
 	}
 }
 
-func (r *Raft) sendSnapshot(to uint64, snapshot *pb.Snapshot) {
-	msg := pb.Message{
+func (r *Raft) sendSnapshot(to uint64) {
+
+	// todo 如果有err怎么办,
+	snapshot, err := r.RaftLog.storage.Snapshot()
+	if err != nil {
+		// 一个Trick, 造一个假的Response, 这样会在处理完前面的这些消息后Retry Snapshot()
+		// todo: maybe bug, 有可能会因为错误的To和From而被拦截掉
+		r.addMsg(pb.Message{
+			MsgType: pb.MessageType_MsgAppendResponse,
+			To:      r.id,
+			Term:    r.Term,
+			From:    to,
+			Index:   r.Prs[to].Next - 1,
+			Reject:  true,
+		})
+	}
+	r.addMsg(pb.Message{
 		MsgType:  pb.MessageType_MsgSnapshot,
 		To:       to,
 		Term:     r.Term,
 		From:     r.id,
-		Snapshot: snapshot,
-	}
-	r.addMsg(msg)
+		Snapshot: &snapshot,
+	})
 }

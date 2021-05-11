@@ -333,7 +333,6 @@ func NewMsgAppendResponseHandler(raft *Raft) *MsgAppendResponseHandler {
 func (h *MsgAppendResponseHandler) Handle(m pb.Message) error {
 	// 1 如果 reject了 就把Next-1然后再发一遍
 	// 这里多一个判断条件是为了防止连发两个false的情况出现
-	// todo: 这里多层if嵌套, 想办法优化一下
 	if m.Reject {
 		// 老领导直接停
 		if m.GetTerm() > h.raft.Term {
@@ -342,16 +341,6 @@ func (h *MsgAppendResponseHandler) Handle(m pb.Message) error {
 		// 向下顺延一位
 		if m.GetIndex()+1 == h.raft.Prs[m.GetFrom()].Next {
 			h.raft.Prs[m.GetFrom()].Next--
-			// 如果一直失败到过界, 就改成发snapshot
-			if h.raft.Prs[m.GetFrom()].Next < h.raft.RaftLog.FirstIndex() {
-				snapshot, err := h.raft.RaftLog.storage.Snapshot()
-				if err != nil {
-					// 重新再放进来, 不知道这里会不会报错
-					h.raft.addMsg(m)
-				}
-				h.raft.sendSnapshot(m.GetFrom(), &snapshot)
-				return nil
-			}
 			h.raft.sendAppend(m.GetFrom())
 		}
 		return nil
