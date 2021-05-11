@@ -407,18 +407,6 @@ In this stage, you may consider these errors, and others will be processed in pr
 
 
 
-### Q&A
-
-
-
-Q: Node的作用
-
-Q: 看这里kv/storage/raft_storage/raft_server.go:84，每个batch中会有很多req，但是仔细一看,这些cmd并不需要保证它们加在一起是并发的
-
-Q; 看getMeta kv/util/engine_util/util.go:42，说明其实entries是用meta存的
-
-TIP: 可以使用pb中的marshell和UnMarshell来编码解码
-
 ## Part C
 
 As things stand now with your code, it's not practical for a long-running server to remember the complete Raft log forever. Instead, the server will check the number of Raft log, and discard log entries exceeding the threshold from time to time.
@@ -427,26 +415,71 @@ As things stand now with your code, it's not practical for a long-running server
 
 In this part, you will implement the Snapshot handling based on the above two part implementation. Generally, Snapshot is just a raft message like AppendEntries used to replicate data to followers, what makes it different is its size, Snapshot contains the whole state machine data at some point of time, and to build and send such a big message at once will consume many resource and time, which may block the handling of other raft messages, to amortize this problem, Snapshot message will use an independent connect, and split the data into chunks to transport. That’s the reason why there is a snapshot RPC API for TinyKV service. If you are interested in the detail of sending and receiving, check `snapRunner` and the reference <https://pingcap.com/blog-cn/tikv-source-code-reading-10/>
 
-> 在本部分中，您将基于上述两部分实现实现快照处理。
+> 在本部分中，您将在Part A和Part B的基础上实现快照处理。一般来说，`Snapshot`只是一个与`AppendEntries`类似的raft消息，用于将数据复制到`follower`。让它与众不同的是它的大小。Snapshot包含某个时间点的整个状态机数据，同步构建和发送这样的大消息将消耗大量的资源和时间，这可能会阻塞其他raft消息的处理。Snapshot消息将使用一个独立的连接，并将数据分割成块进行传输。这就是为什么TinyKV服务有一个`snapshot RPC API`的原因。如果您对发送和接收的细节感兴趣，请查看`snapRunner`和参考https://pingcap.com/blog-cn/tikv-source-code-reading-10/
 
 ### The Code
 
 All you need to change is based on the code written in part A and part B.
+
+> 所有你需要改变的是基于Part A和Part B中写下的代码
 
 ### Implement in Raft
 
 Although we need some different handling for Snapshot messages, in the perspective of raft algorithm there should be no difference. See the definition of `eraftpb.Snapshot` in the proto file, the `data` field on `eraftpb.Snapshot` does not represent the actual state machine data but some metadata is used for the upper application you can ignore it for now. When the leader needs to send a Snapshot message to a follower, it can call `Storage.Snapshot()` to get a `eraftpb.Snapshot`, then send the snapshot message like other raft messages. How the state machine data is actually built and sent are implemented by the raftstore, it will be introduced in the next step. You can assume that once `Storage.Snapshot()` returns successfully, it’s safe for Raft leader to the snapshot message to the follower, and follower should call `handleSnapshot` to handle it, which namely just restore the raft internal state like the term, commit index and membership information, etc, from the
 `eraftpb.SnapshotMetadata` in the message, after that, the procedure of snapshot handling is finish.
 
+> 虽然我们需要一些不同的逻辑来处理快照消息，但在raft算法的角度应该没有区别。参见proto文件上的`eraftpb.Snapshot`定义，`eraftpb.Snapshot`上的 `data`域并不代表实际的状态机数据，它代表的是用于上层应用的一些元数据，你现在可以忽略它。当leader需要向follower发送一个Snapshot消息时，它可以调用`Storage.Snapshot()`来获得一个`eraftpb.Snapshot`，然后像其他raft消息一样发送Snapshot消息。状态机数据是如何实际构建和发送的是由`raftstore`实现的，这将在下一步中介绍。你可以假设一旦`Storage.Snapshot()`成功返回，Raft leader就可以安全地将`snapshot`消息传递给`follower`,  `follower`应该调用`handleSnapshot`来处理它，这个方法只是从`eraftpb.SnapshotMetadata`中重新加载raft内部状态，比如：`term`、`commitIndex`和成员信息等。这之后，snapshot处理过程结束
+
 ### Implement in raftstore
 
 In this step, you need to learn two more workers of raftstore — raftlog-gc worker and region worker.
 
+> 在这个步骤中，您需要学习`raftstore`的两个worker - `raftlog-gc worker`和`region worker`。
+
 Raftstore checks whether it needs to gc log from time to time based on the config `RaftLogGcCountLimit`, see `onRaftGcLogTick()`. If yes, it will propose a raft admin command `CompactLogRequest` which is wrapped in `RaftCmdRequest` just like four basic command types(Get/Put/Delete/Snap) implemented in project2 part B. Then you need to process this admin command when it’s committed by Raft. But unlike Get/Put/Delete/Snap commands write or read state machine data, `CompactLogRequest` modifies metadata, namely updates the `RaftTruncatedState` which is in the `RaftApplyState`. After that, you should schedule a task to raftlog-gc worker by `ScheduleCompactLog`. Raftlog-gc worker will do the actual log deletion work asynchronously.
 
+> `Raftstore`根据配置`RaftLogGcCountLimit`检查它是否需要定时回收日志，参见`onRaftGcLogTick()`。如果是，它将提出一个raft admin命令`CompactLogRequest`，该命令被封装在`RaftCmdRequest`中，就像在project2B部分实现的四种基本命令类型(`Get/Put/Delete/Snap`)一样。然后，当Raft提交这个管理命令后，您需要apply它。但不像`Get/Put/Delete/Snap`命令写或读状态机数据，`CompactLogRequest`修改元数据，即更新`RaftTruncatedState`(这个实际上在`peer.PeerStorage.RaftApplyState`上)。在那之后，你应该通过`ScheduleCompactLog`计划一个任务到`raftlog-gc worker`。`Raftlog-gc worker`将异步执行实际的日志删除工作。(除此之外还需要处理内存中的log情况)
+
 Then due to the log compaction, Raft module maybe needs to send a snapshot. `PeerStorage` implements `Storage.Snapshot()`. TinyKV generates snapshots and applies snapshots in the region worker. When calling `Snapshot()`, it actually sends a task `RegionTaskGen` to the region worker. The message handler of the region worker is located in `kv/raftstore/runner/region_task.go`. It scans the underlying engines to generate a snapshot, and sends snapshot metadata by channel. At the next time Raft calling `Snapshot`, it checks whether the snapshot generating is finished. If yes, Raft should send the snapshot message to other peers, and the snapshot sending and receiving work is handled by `kv/storage/raft_storage/snap_runner.go`. You don’t need to dive into the details, only should know the snapshot message will be handled by `onRaftMsg` after the snapshot is received.
+
+> 然后，由于日志压缩，Raft模块可能需要发送一个`Snapshot`。`PeerStorage`实现了`Storage.Snapshot()`。TinyKV在`region worker`中生成快照并应用快照。当调用`Snapshot()`时，它实际上向`region worker`发送一个`RegionTaskGen`任务。`region worker`的消息处理程序位于`kv/raftstore/runner/region_task.go`中。它scan底层引擎以生成快照，并通过channel发送快照元数据。在下一次Raft调用Snapshot时，它会检查快照生成是否完成。如果完成，则Raft将快照消息发送给其他peer，快照发送和接收工作由`kv/storage/raft_storage/snap_runner.go`处理。您不需要深入了解细节，只需知道快照消息将在收到快照后由`onRaftMsg`处理。
 
 Then the snapshot will reflect in the next Raft ready, so the task you should do is to modify the raft ready process to handle the case of a snapshot. When you are sure to apply the snapshot, you can update the peer storage’s memory state like `RaftLocalState`, `RaftApplyState`, and `RegionLocalState`. Also, don’t forget to persist these states to kvdb and raftdb and remove stale state from kvdb and raftdb. Besides, you also need to update
 `PeerStorage.snapState` to `snap.SnapState_Applying` and send `runner.RegionTaskApply` task to region worker through `PeerStorage.regionSched` and wait until region worker finish.
 
+> 然后快照将反映在下一个Raft ready中，因此您应该做的任务是修改Raft ready流程来处理快照的情况。当确定应用快照时，可以更新Peer Storage的内存状态，如`RaftLocalState`、`RaftApplyState`和`RegionLocalState`。另外，不要忘记将这些状态持久化到`kvdb`和`raftdb`，并从`kvdb`和`raftdb`中删除陈旧的状态。此外，你还需要更新`PeerStorage.snapState`为`snap.SnapState_Applying`并且通过`PeerStorage.regionSched`发送`runner.RegionTaskApply`任务给region worker，等待region worker完成它。
+
 You should run `make project2c` to pass all the tests.
+
+### 补充
+
+
+
+对于基于磁盘的状态机，系统状态的最近副本作为正常操作的一部分在磁盘上维护。因此，一旦状态机将写操作反映到磁盘，就可以丢弃Raft日志，并且只有在将一致的磁盘映像发送到其他服务器时才使用快照(章节5.2)。
+
+
+
+TiKV 使用 Raft 算法来提供高可用且具有强一致性的存储服务。在 Raft 中，Snapshot 指的是整个 State Machine 数据的一份快照，大体上有以下这几种情况需要用到 Snapshot：
+
+1. 正常情况下 leader 与 follower/learner 之间是通过 append log 的方式进行同步的，出于空间和效率的考虑，leader 会定期清理过老的 log。假如 follower/learner 出现宕机或者网络隔离，恢复以后可能所缺的 log 已经在 leader 节点被清理掉了，此时只能通过 Snapshot 的方式进行同步。
+2. Raft 加入新的节点的，由于新节点没同步过任何日志，只能通过接收 Snapshot 的方式来同步。实际上这也可以认为是 1 的一种特殊情形。
+3. 出于备份/恢复等需求，应用层需要 dump 一份 State Machine 的完整数据。
+
+TiKV 涉及到的是 1 和 2 这两种情况。**在我们的实现中，Snapshot 总是由 Region leader 所在的 TiKV 生成，通过网络发送给 Region follower/learner 所在的 TiKV。**
+
+> 这种实现与Raft论文中提及的实现是有区别的
+
+理论上讲，我们完全可以把 Snapshot 当作普通的 `RaftMessage` 来发送，但这样做实践上会产生一些问题，主要是因为 Snapshot 消息的尺寸远大于其他 `RaftMessage`：
+
+1. Snapshot 消息需要花费更长的时间来发送，如果共用网络连接容易导致网络拥塞，进而引起其他 Region 出现 Raft 选举超时等问题。
+2. 构建待发送 Snapshot 消息需要消耗更多的内存。
+3. 过大的消息可能导致超出 gRPC 的 Message Size 限制等问题。
+
+基于上面的原因，TiKV 对 Snapshot 的发送和接收进行了特殊处理，为每个 Snapshot 创建单独的网络连接，并将 Snapshot 拆分成 1M 大小的多个 Chunk 进行传输。
+
+### Q
+
+1. 内存中的log什么时候compact
+   - 最好跟硬盘的log一起，直接删，对leader来说这么干完全没问题 但是对follower来说，如果直接删????
+   - 也可以单干
+2. `snapshot + log = total`

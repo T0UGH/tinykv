@@ -184,6 +184,7 @@ func (d *peerMsgHandler) onRaftBaseTick() {
 	d.ticker.schedule(PeerTickRaft)
 }
 
+// 规划压缩日志, 它发送一个压缩任务给Raftlog-gc worker
 func (d *peerMsgHandler) ScheduleCompactLog(truncatedIndex uint64) {
 	raftLogGCTask := &runner.RaftLogGCTask{
 		RaftEngine: d.ctx.engine.Raft,
@@ -192,6 +193,8 @@ func (d *peerMsgHandler) ScheduleCompactLog(truncatedIndex uint64) {
 		EndIdx:     truncatedIndex + 1,
 	}
 	d.LastCompactedIdx = raftLogGCTask.EndIdx
+	// 实际上被这里收到并处理了 kv/raftstore/runner/raftlog_gc.go:80
+	// 只删除log不生成Snapshot
 	d.ctx.raftLogGCTaskSender <- raftLogGCTask
 }
 

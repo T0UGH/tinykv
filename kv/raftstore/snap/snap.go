@@ -113,6 +113,13 @@ func NewApplyOptions(db *badger.DB, region *metapb.Region) *ApplyOptions {
 //   3. receive snapshot from remote raftstore and write it to local storage
 //   4. apply snapshot
 //   5. snapshot gc
+// `Snapshot`是一个snapshot的接口
+// 它用于以下情况
+//	 1. 构建本地snapshot
+//   2. 读取本地snapshot并且把它复制到远程raftstores上
+//   3. 从远程raftstore中收到snapshot并且将它写到本地存储
+//   4. 应用snapshot
+//   5. snapshot 垃圾回收
 type Snapshot interface {
 	io.Reader
 	io.Writer

@@ -153,8 +153,8 @@ type Raft struct {
 	// the log
 	RaftLog *RaftLog
 
-	// todo: 为啥不需要它
-	peers []uint64
+	//// todo: 为啥不需要它
+	//peers []uint64
 
 	// 记录了所有peers的进度
 	// log replication progress of each peers
@@ -227,9 +227,8 @@ func newRaft(c *Config) *Raft {
 	// Your Code Here (2A).
 	raft := &Raft{}
 	raft.id = c.ID
-	raft.peers = c.Peers
 	raft.Prs = make(map[uint64]*Progress)
-	for _, id := range raft.peers {
+	for _, id := range c.Peers {
 		raft.Prs[id] = &Progress{}
 	}
 	// todo: 什么时候考虑从disk中恢复数据
@@ -330,7 +329,7 @@ func (r *Raft) becomeLeader() {
 	// 3 自己就是Lead
 	r.Lead = r.id
 	// 4 初始化Prs
-	for _, id := range r.peers {
+	for id := range r.Prs {
 		if id == r.id {
 			r.Prs[id] = &Progress{
 				Match: r.RaftLog.LastIndex(),
@@ -372,6 +371,8 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 // handleSnapshot handle Snapshot RPC request
 func (r *Raft) handleSnapshot(m pb.Message) {
 	// Your Code Here (2C).
+	m.MsgType = pb.MessageType_MsgSnapshot
+	r.roleMap[r.State].Handle(m)
 }
 
 // addNode add a new node to raft group
@@ -391,25 +392,25 @@ func (r *Raft) addMsg(m pb.Message) {
 
 // 将传过来的Message的to改成所有msg并发送其他不变
 func (r *Raft) broadCastMsg(m pb.Message) {
-	for _, v := range r.peers {
+	for id := range r.Prs {
 		// 给除了自己之外的人发
-		if v == r.id {
+		if id == r.id {
 			continue
 		}
 		currMsg := m
-		currMsg.To = v
+		currMsg.To = id
 		r.addMsg(currMsg)
 	}
 }
 
 // leader广播AppendEntries, 发给所有它该同步的peers
 func (r *Raft) broadCastAppend() {
-	for _, v := range r.peers {
+	for id := range r.Prs {
 		// 给除了自己之外的人发
-		if v == r.id {
+		if id == r.id {
 			continue
 		}
-		r.sendAppend(v)
+		r.sendAppend(id)
 	}
 }
 
@@ -432,4 +433,15 @@ func (r *Raft) updateAndBroadCastCommitProgress() {
 	if updateSuccess {
 		r.broadCastAppend()
 	}
+}
+
+func (r *Raft) sendSnapshot(to uint64, snapshot *pb.Snapshot) {
+	msg := pb.Message{
+		MsgType:  pb.MessageType_MsgSnapshot,
+		To:       to,
+		Term:     r.Term,
+		From:     r.id,
+		Snapshot: snapshot,
+	}
+	r.addMsg(msg)
 }

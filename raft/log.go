@@ -57,6 +57,7 @@ type RaftLog struct {
 	entries []pb.Entry
 
 	// the incoming unstable snapshot, if any.
+	// 接收到的未持久化snapshot
 	// (Used in 2C)
 	pendingSnapshot *pb.Snapshot
 
@@ -91,6 +92,7 @@ func newLog(storage Storage) *RaftLog {
 // We need to compact the log entries in some point of time like
 // storage compact stabled log entries prevent the log entries
 // grow unlimitedly in memory
+// 压缩内存中的日志
 func (l *RaftLog) maybeCompact() {
 	// Your Code Here (2C).
 }
@@ -203,4 +205,10 @@ func (l *RaftLog) UpdateCommit(commit uint64) bool {
 		return true
 	}
 	return false
+}
+
+func (l *RaftLog) ResetEntry(lastIndex, lastTerm uint64) {
+	l.entries = make([]pb.Entry, 1)
+	l.entries[0].Index = lastIndex
+	l.entries[0].Term = lastTerm
 }

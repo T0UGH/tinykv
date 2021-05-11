@@ -77,6 +77,7 @@ type snapContext struct {
 	mgr       *snap.SnapManager
 }
 
+// handleGen处理生成快照的任务
 // handleGen handles the task of generating snapshot of the Region.
 func (snapCtx *snapContext) handleGen(regionId uint64, notifier chan<- *eraftpb.Snapshot) {
 	snap, err := doSnapshot(snapCtx.engines, snapCtx.mgr, regionId)
@@ -99,6 +100,7 @@ func (snapCtx *snapContext) applySnap(regionId uint64, startKey, endKey []byte, 
 	snapCtx.mgr.Register(snapKey, snap.SnapEntryApplying)
 	defer snapCtx.mgr.Deregister(snapKey, snap.SnapEntryApplying)
 
+	// 根据key获取接收到的snapshot
 	snapshot, err := snapCtx.mgr.GetSnapshotForApplying(snapKey)
 	if err != nil {
 		return errors.New(fmt.Sprintf("missing snapshot file %s", err))
@@ -110,6 +112,7 @@ func (snapCtx *snapContext) applySnap(regionId uint64, startKey, endKey []byte, 
 		StartKey: startKey,
 		EndKey:   endKey,
 	})
+	// 应用它
 	if err := snapshot.Apply(*applyOptions); err != nil {
 		return err
 	}
@@ -118,6 +121,7 @@ func (snapCtx *snapContext) applySnap(regionId uint64, startKey, endKey []byte, 
 	return nil
 }
 
+// handleApply尝试应用特定Region的snapshot.它调用`applySnap`来做实际的工作
 // handleApply tries to apply the snapshot of the specified Region. It calls `applySnap` to do the actual work.
 func (snapCtx *snapContext) handleApply(regionId uint64, notifier chan<- bool, startKey, endKey []byte, snapMeta *eraftpb.SnapshotMetadata) {
 	err := snapCtx.applySnap(regionId, startKey, endKey, snapMeta)
@@ -164,17 +168,22 @@ func getAppliedIdxTermForSnapshot(raft *badger.DB, kv *badger.Txn, regionId uint
 func doSnapshot(engines *engine_util.Engines, mgr *snap.SnapManager, regionId uint64) (*eraftpb.Snapshot, error) {
 	log.Debugf("begin to generate a snapshot. [regionId: %d]", regionId)
 
+	// 先声明一个新的事务
 	txn := engines.Kv.NewTransaction(false)
 
+	// 获取appliedIdx和Term
 	index, term, err := getAppliedIdxTermForSnapshot(engines.Raft, txn, regionId)
 	if err != nil {
 		return nil, err
 	}
 
+	// 通过这些东西生成一个key
 	key := snap.SnapKey{RegionID: regionId, Index: index, Term: term}
+	// 向SnapManager中注册这个Key
 	mgr.Register(key, snap.SnapEntryGenerating)
 	defer mgr.Deregister(key, snap.SnapEntryGenerating)
 
+	// 从engine中获取RegionLocalState
 	regionState := new(rspb.RegionLocalState)
 	err = engine_util.GetMetaFromTxn(txn, meta.RegionStateKey(regionId), regionState)
 	if err != nil {

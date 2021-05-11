@@ -124,7 +124,7 @@ func (h *MsgHupHandler) Handle(m pb.Message) error {
 	h.raft.becomeCandidate()
 	// 2 先count一遍，处理singleNode的情况
 	count := countVotes(h.raft.votes)
-	if count >= len(h.raft.peers)/2+1 {
+	if count >= len(h.raft.Prs)/2+1 {
 		h.raft.becomeLeader()
 	}
 	lastIndex := h.raft.RaftLog.LastIndex()
@@ -208,12 +208,12 @@ func (h *CandidateMsgRequestVoteResponseHandler) Handle(m pb.Message) error {
 	h.raft.votes[m.GetFrom()] = !m.Reject
 	// 当票数累积到一定程度时, becomeLeader
 	count := countVotes(h.raft.votes)
-	if count >= len(h.raft.peers)/2+1 {
+	if count >= len(h.raft.Prs)/2+1 {
 		h.raft.becomeLeader()
 		return nil
 	}
 	// 如果收到了全员的回复, 且选票不够, 将自己变成Follower
-	if len(h.raft.votes) == len(h.raft.peers) {
+	if len(h.raft.votes) == len(h.raft.Prs) {
 		h.raft.becomeFollower(h.raft.Term, None)
 	}
 	return nil
@@ -333,21 +333,30 @@ func NewMsgAppendResponseHandler(raft *Raft) *MsgAppendResponseHandler {
 func (h *MsgAppendResponseHandler) Handle(m pb.Message) error {
 	// 1 如果 reject了 就把Next-1然后再发一遍
 	// 这里多一个判断条件是为了防止连发两个false的情况出现
-	if m.GetReject() == true {
+	// todo: 这里多层if嵌套, 想办法优化一下
+	if m.Reject {
 		// 老领导直接停
 		if m.GetTerm() > h.raft.Term {
 			return nil
 		}
+		// 向下顺延一位
 		if m.GetIndex()+1 == h.raft.Prs[m.GetFrom()].Next {
 			h.raft.Prs[m.GetFrom()].Next--
-			// 如果一直失败到过界, 就不发了
+			// 如果一直失败到过界, 就改成发snapshot
 			if h.raft.Prs[m.GetFrom()].Next < h.raft.RaftLog.FirstIndex() {
+				snapshot, err := h.raft.RaftLog.storage.Snapshot()
+				if err != nil {
+					// 重新再放进来, 不知道这里会不会报错
+					h.raft.addMsg(m)
+				}
+				h.raft.sendSnapshot(m.GetFrom(), &snapshot)
 				return nil
 			}
 			h.raft.sendAppend(m.GetFrom())
 		}
 		return nil
 	}
+
 	// 2 如果没有reject 就更新matchIndex然后, 重算commitIndex
 	// 问: 没有reject如何更新matchIndex? 我需要知道一些信息, 比如当前进行到了哪里，然后用这个信息来更新
 	h.raft.Prs[m.GetFrom()].Match = m.GetIndex()
@@ -377,5 +386,38 @@ func (h *MsgHeartBeatResponseHandler) Handle(m pb.Message) error {
 	if h.raft.Prs[h.raft.id].Match > h.raft.Prs[m.GetFrom()].Match {
 		h.raft.sendAppend(m.GetFrom())
 	}
+	return nil
+}
+
+type MsgSnapshotHandler struct {
+	raft *Raft
+}
+
+func NewMsgSnapshotHandler(raft *Raft) *MsgSnapshotHandler {
+	return &MsgSnapshotHandler{raft: raft}
+}
+
+func (h *MsgSnapshotHandler) Handle(m pb.Message) error {
+	// 1 比谁新, 新的才能被应用, 否则不能被应用
+	// todo 这里的index是跟谁比?
+	if m.GetSnapshot() == nil || m.GetSnapshot().Metadata.Term < h.raft.Term ||
+		m.GetSnapshot().Metadata.Index < h.raft.RaftLog.LastIndex() {
+		return nil
+	}
+
+	// 即便我是follower也在这里调用一下来更新状态
+	h.raft.becomeFollower(m.GetSnapshot().Metadata.Term, m.GetFrom())
+
+	// 更新snapshot, entry, commit, prs
+	h.raft.RaftLog.pendingSnapshot = m.Snapshot
+
+	// todo: 这里直接reset了好不好
+	h.raft.RaftLog.ResetEntry(m.Snapshot.Metadata.Index, m.Snapshot.Metadata.Term)
+	h.raft.RaftLog.UpdateCommit(m.Snapshot.Metadata.Index)
+	h.raft.Prs = make(map[uint64]*Progress)
+	for _, id := range m.Snapshot.Metadata.ConfState.Nodes {
+		h.raft.Prs[id] = &Progress{}
+	}
+
 	return nil
 }

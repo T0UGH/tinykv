@@ -26,7 +26,9 @@ func NewRaftLogGCTaskHandler() *raftLogGCTaskHandler {
 }
 
 // gcRaftLog does the GC job and returns the count of logs collected.
+// gcRaftLog 执行GC工作并且返回收集到的log的数量
 func (r *raftLogGCTaskHandler) gcRaftLog(raftDb *badger.DB, regionId, startIdx, endIdx uint64) (uint64, error) {
+	// 寻找需要gc的log的range
 	// Find the raft log idx range needed to be gc.
 	firstIdx := startIdx
 	if firstIdx == 0 {
@@ -53,6 +55,7 @@ func (r *raftLogGCTaskHandler) gcRaftLog(raftDb *badger.DB, regionId, startIdx, 
 		return 0, nil
 	}
 
+	// 从磁盘上删除所有的range内的log
 	raftWb := engine_util.WriteBatch{}
 	for idx := firstIdx; idx < endIdx; idx += 1 {
 		key := meta.RaftLogKey(regionId, idx)
@@ -73,6 +76,7 @@ func (r *raftLogGCTaskHandler) reportCollected(collected uint64) {
 	r.taskResCh <- raftLogGcTaskRes(collected)
 }
 
+// 实际的处理函数
 func (r *raftLogGCTaskHandler) Handle(t worker.Task) {
 	logGcTask, ok := t.(*RaftLogGCTask)
 	if !ok {

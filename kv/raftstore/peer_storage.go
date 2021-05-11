@@ -160,6 +160,7 @@ func (ps *PeerStorage) FirstIndex() (uint64, error) {
 	return ps.truncatedIndex() + 1, nil
 }
 
+// 返回一个生成的Snapshot, 不一定能实时返回, 有可能要调用好多次才能返回
 func (ps *PeerStorage) Snapshot() (eraftpb.Snapshot, error) {
 	var snapshot eraftpb.Snapshot
 	if ps.snapState.StateType == snap.SnapState_Generating {

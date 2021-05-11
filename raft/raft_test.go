@@ -1089,12 +1089,15 @@ func TestRestoreSnapshot2C(t *testing.T) {
 	sm := newTestRaft(1, []uint64{1, 2}, 10, 1, storage)
 	sm.handleSnapshot(pb.Message{Snapshot: &s})
 
+	// 比较index有没有更新
 	if sm.RaftLog.LastIndex() != s.Metadata.Index {
 		t.Errorf("log.lastIndex = %d, want %d", sm.RaftLog.LastIndex(), s.Metadata.Index)
 	}
+	// 比较term有没有更新
 	if mustTerm(sm.RaftLog.Term(s.Metadata.Index)) != s.Metadata.Term {
 		t.Errorf("log.lastTerm = %d, want %d", mustTerm(sm.RaftLog.Term(s.Metadata.Index)), s.Metadata.Term)
 	}
+	//  比较Prs有没有更新
 	sg := nodes(sm)
 	if !reflect.DeepEqual(sg, s.Metadata.ConfState.Nodes) {
 		t.Errorf("sm.Nodes = %+v, want %+v", sg, s.Metadata.ConfState.Nodes)
@@ -1118,7 +1121,7 @@ func TestRestoreIgnoreSnapshot2C(t *testing.T) {
 		},
 	}
 
-	// ignore snapshot
+	// ignore snapshot 忽略这个snapshot, 因为它的commit太小了
 	sm.handleSnapshot(pb.Message{Snapshot: &s})
 	if sm.RaftLog.committed != wcommit {
 		t.Errorf("commit = %d, want %d", sm.RaftLog.committed, wcommit)
@@ -1127,6 +1130,7 @@ func TestRestoreIgnoreSnapshot2C(t *testing.T) {
 
 func TestProvideSnap2C(t *testing.T) {
 	// restore the state machine from a snapshot so it has a compacted log and a snapshot
+	// 从快照还原状态机，使其具有压缩的日志和快照
 	s := pb.Snapshot{
 		Metadata: &pb.SnapshotMetadata{
 			Index:     11, // magic number
@@ -1143,13 +1147,16 @@ func TestProvideSnap2C(t *testing.T) {
 	sm.readMessages() // clear message
 
 	// force set the next of node 2 to less than the SnapshotMetadata.Index, so that node 2 needs a snapshot
+	// 强制设置node2的next小于已经压缩的, 所以node 2 需要一个snapshot
 	sm.Prs[2].Next = 10
 	sm.Step(pb.Message{From: 2, To: 1, MsgType: pb.MessageType_MsgPropose, Entries: []*pb.Entry{{Data: []byte("somedata")}}})
 
+	// 读一下消息
 	msgs := sm.readMessages()
 	if len(msgs) != 1 {
 		t.Fatalf("len(msgs) = %d, want 1", len(msgs))
 	}
+	// 因为next小于已经压缩的, 所以不发append了,直接发一个snapshot
 	m := msgs[0]
 	if m.MsgType != pb.MessageType_MsgSnapshot {
 		t.Errorf("m.MsgType = %v, want %v", m.MsgType, pb.MessageType_MsgSnapshot)
