@@ -207,8 +207,24 @@ func (l *RaftLog) UpdateCommit(commit uint64) bool {
 	return false
 }
 
-func (l *RaftLog) ResetEntry(lastIndex, lastTerm uint64) {
+func (l *RaftLog) Compact(compactIndex, compactTerm uint64) {
+
+	var remain []pb.Entry
+	if compactIndex < l.LastIndex() {
+		// todo 这里有个异常没处理
+		remain, _ = l.Entries(compactIndex, l.LastIndex()+1)
+	}
 	l.entries = make([]pb.Entry, 1)
-	l.entries[0].Index = lastIndex
-	l.entries[0].Term = lastTerm
+	l.entries[0].Index = compactIndex
+	l.entries[0].Term = compactTerm
+	if remain != nil {
+		l.entries = append(l.entries, remain...)
+	}
+}
+
+func (l *RaftLog) Reset(index, term uint64) {
+	l.entries = make([]pb.Entry, 1)
+	l.entries[0].Index = index
+	l.entries[0].Term = term
+	l.UpdateCommit(index)
 }

@@ -2,6 +2,9 @@ package raftstore
 
 import (
 	"fmt"
+	"github.com/Connor1996/badger"
+	"github.com/pingcap-incubator/tinykv/kv/util/engine_util"
+	"github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 	"time"
 
 	"github.com/Connor1996/badger/y"
@@ -44,6 +47,9 @@ func (d *peerMsgHandler) HandleRaftReady() {
 	}
 	// Your Code Here (2B).
 	rd := d.RaftGroup.Ready()
+	for _, entry := range rd.CommittedEntries {
+		d.ApplyEntry(entry)
+	}
 	// todo 异常处理是否对
 	// 先保存后发送消息
 	_, err := d.peer.peerStorage.SaveReadyState(&rd)
@@ -51,12 +57,7 @@ func (d *peerMsgHandler) HandleRaftReady() {
 		log.Error(err)
 		return
 	}
-
 	d.Send(d.ctx.trans, rd.Messages)
-	//todo 2c snapshot
-	for _, entry := range rd.CommittedEntries {
-		d.ApplyEntry(entry)
-	}
 	d.RaftGroup.Advance(rd)
 }
 
@@ -184,6 +185,7 @@ func (d *peerMsgHandler) onRaftBaseTick() {
 	d.ticker.schedule(PeerTickRaft)
 }
 
+// todo 需要在调用这个函数之前先算一个truncatedIndex
 // 规划压缩日志, 它发送一个压缩任务给Raftlog-gc worker
 func (d *peerMsgHandler) ScheduleCompactLog(truncatedIndex uint64) {
 	raftLogGCTask := &runner.RaftLogGCTask{
@@ -442,6 +444,7 @@ func (d *peerMsgHandler) findSiblingRegion() (result *metapb.Region) {
 
 func (d *peerMsgHandler) onRaftGCLogTick() {
 	d.ticker.schedule(PeerTickRaftLogGC)
+	// 只有leader才会触发onRaftGCLogTick()
 	if !d.IsLeader() {
 		return
 	}
@@ -449,6 +452,7 @@ func (d *peerMsgHandler) onRaftGCLogTick() {
 	appliedIdx := d.peerStorage.AppliedIndex()
 	firstIdx, _ := d.peerStorage.FirstIndex()
 	var compactIdx uint64
+	// 如果超过了GcCountLimit就会触发GC
 	if appliedIdx > firstIdx && appliedIdx-firstIdx >= d.ctx.cfg.RaftLogGcCountLimit {
 		compactIdx = appliedIdx
 	} else {
@@ -607,4 +611,110 @@ func newCompactLogRequest(regionID uint64, peer *metapb.Peer, compactIndex, comp
 		},
 	}
 	return req
+}
+
+func (d *peerMsgHandler) applyAdminRequest(req *raft_cmdpb.AdminRequest) (*raft_cmdpb.AdminResponse, error) {
+	resp := new(raft_cmdpb.AdminResponse)
+	resp.CmdType = req.CmdType
+	switch req.CmdType {
+	case raft_cmdpb.AdminCmdType_CompactLog:
+		// 更新State
+		d.peerStorage.applyState.TruncatedState.Index = req.CompactLog.CompactIndex
+		d.peerStorage.applyState.TruncatedState.Term = req.CompactLog.CompactTerm
+		// 压缩内存中的log
+		d.RaftGroup.Raft.RaftLog.Compact(req.CompactLog.CompactIndex, req.CompactLog.CompactTerm)
+		// 调用ScheduleCompactLog
+		d.ScheduleCompactLog(req.CompactLog.CompactIndex)
+		// 返回
+		resp.CompactLog = new(raft_cmdpb.CompactLogResponse)
+	}
+	return resp, nil
+}
+
+func (d *peerMsgHandler) ApplyEntry(ent eraftpb.Entry) {
+	var cmdReq raft_cmdpb.RaftCmdRequest
+	err := cmdReq.Unmarshal(ent.Data)
+	if err != nil {
+		panic(err)
+	}
+	resp := newCmdResp()
+	BindRespTerm(resp, ent.Term)
+	var txn *badger.Txn
+	if cmdReq.AdminRequest != nil {
+		adminResp, err := d.applyAdminRequest(cmdReq.AdminRequest)
+		if err != nil {
+			BindRespError(resp, err)
+			d.finishCallback(ent.Index, ent.Term, resp, txn)
+			return
+		}
+		resp.AdminResponse = adminResp
+	}
+	db := d.peerStorage.Engines.Kv
+labelFor:
+	for _, req := range cmdReq.Requests {
+		switch req.CmdType {
+		case raft_cmdpb.CmdType_Get:
+			{
+				getReq := req.Get
+				val, err := engine_util.GetCF(db, getReq.Cf, getReq.Key)
+				if err != nil {
+					BindRespError(resp, err)
+					break labelFor
+				}
+				r := &raft_cmdpb.Response{
+					CmdType: req.CmdType,
+					Get:     &raft_cmdpb.GetResponse{Value: val},
+				}
+				resp.Responses = append(resp.Responses, r)
+			}
+		case raft_cmdpb.CmdType_Delete:
+			{
+				delReq := req.Delete
+				err := engine_util.DeleteCF(db, delReq.Cf, delReq.Key)
+				if err != nil {
+					BindRespError(resp, err)
+					break labelFor
+				}
+				r := &raft_cmdpb.Response{
+					CmdType: req.CmdType,
+					Delete:  &raft_cmdpb.DeleteResponse{},
+				}
+				resp.Responses = append(resp.Responses, r)
+			}
+		case raft_cmdpb.CmdType_Put:
+			{
+				putReq := req.Put
+				err := engine_util.PutCF(db, putReq.Cf, putReq.Key, putReq.Value)
+				if err != nil {
+					BindRespError(resp, err)
+					break labelFor
+				}
+				r := &raft_cmdpb.Response{
+					CmdType: req.CmdType,
+					Put:     &raft_cmdpb.PutResponse{},
+				}
+				resp.Responses = append(resp.Responses, r)
+			}
+		case raft_cmdpb.CmdType_Snap:
+			{
+				txn = d.peerStorage.Engines.Kv.NewTransaction(false)
+				r := &raft_cmdpb.Response{
+					CmdType: req.CmdType,
+					Snap:    &raft_cmdpb.SnapResponse{Region: d.peerStorage.region},
+				}
+				resp.Responses = append(resp.Responses, r)
+			}
+		}
+	}
+	d.finishCallback(ent.Index, ent.Term, resp, txn)
+}
+
+func (d *peerMsgHandler) finishCallback(index, term uint64, resp *raft_cmdpb.RaftCmdResponse, txn *badger.Txn) {
+	cb := d.findCallback(index, term)
+	if cb != nil {
+		if txn != nil {
+			cb.Txn = txn
+		}
+		cb.Done(resp)
+	}
 }

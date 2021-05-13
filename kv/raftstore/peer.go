@@ -2,8 +2,6 @@ package raftstore
 
 import (
 	"fmt"
-	"github.com/Connor1996/badger"
-	"github.com/pingcap-incubator/tinykv/proto/pkg/raft_cmdpb"
 	"time"
 
 	"github.com/pingcap-incubator/tinykv/kv/config"
@@ -414,78 +412,4 @@ func (p *peer) sendRaftMessage(msg eraftpb.Message, trans Transport) error {
 	}
 	sendMsg.Message = &msg
 	return trans.Send(sendMsg)
-}
-
-func (p *peer) ApplyEntry(ent eraftpb.Entry) {
-	// 先apply
-	var cmdReq raft_cmdpb.RaftCmdRequest
-	err := cmdReq.Unmarshal(ent.Data)
-	if err != nil {
-		panic(err)
-	}
-	resp := newCmdResp()
-	BindRespTerm(resp, ent.Term)
-	db := p.peerStorage.Engines.Kv
-	var txn *badger.Txn
-	for _, req := range cmdReq.Requests {
-		switch req.CmdType {
-		case raft_cmdpb.CmdType_Get:
-			{
-				getReq := req.Get
-				val, err := engine_util.GetCF(db, getReq.Cf, getReq.Key)
-				if err != nil {
-					panic(err)
-				}
-				r := &raft_cmdpb.Response{
-					CmdType: req.CmdType,
-					Get:     &raft_cmdpb.GetResponse{Value: val},
-				}
-				resp.Responses = append(resp.Responses, r)
-			}
-		case raft_cmdpb.CmdType_Delete:
-			{
-				delReq := req.Delete
-				err := engine_util.DeleteCF(db, delReq.Cf, delReq.Key)
-				if err != nil {
-					panic(err)
-				}
-				r := &raft_cmdpb.Response{
-					CmdType: req.CmdType,
-					Delete:  &raft_cmdpb.DeleteResponse{},
-				}
-				resp.Responses = append(resp.Responses, r)
-			}
-		case raft_cmdpb.CmdType_Put:
-			{
-				putReq := req.Put
-				err := engine_util.PutCF(db, putReq.Cf, putReq.Key, putReq.Value)
-				if err != nil {
-					panic(err)
-				}
-				r := &raft_cmdpb.Response{
-					CmdType: req.CmdType,
-					Put:     &raft_cmdpb.PutResponse{},
-				}
-				resp.Responses = append(resp.Responses, r)
-			}
-		case raft_cmdpb.CmdType_Snap:
-			{
-				txn = p.peerStorage.Engines.Kv.NewTransaction(false)
-				r := &raft_cmdpb.Response{
-					CmdType: req.CmdType,
-					Snap:    &raft_cmdpb.SnapResponse{Region: p.peerStorage.region},
-				}
-				resp.Responses = append(resp.Responses, r)
-			}
-		}
-
-	}
-	// 然后cb.Done
-	cb := p.findCallback(ent.Index, ent.Term)
-	if cb != nil {
-		if txn != nil {
-			cb.Txn = txn
-		}
-		cb.Done(resp)
-	}
 }

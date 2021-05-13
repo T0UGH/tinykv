@@ -204,14 +204,18 @@ func (rn *RawNode) HasReady() bool {
 func (rn *RawNode) Advance(rd Ready) {
 	// Your Code Here (2A).
 	rn.Raft.msgs = make([]pb.Message, 0)
+	// 也可能需要使用snapshot里面的状态来更新
 	// 更新applied
 	if len(rd.CommittedEntries) != 0 {
 		rn.Raft.RaftLog.applied = rd.CommittedEntries[len(rd.CommittedEntries)-1].Index
+	} else if rd.Snapshot.Metadata != nil {
+		rn.Raft.RaftLog.applied = rd.Snapshot.Metadata.Index
 	}
 	// 更新stabled
-	rn.Raft.RaftLog.stabled = rn.Raft.RaftLog.LastIndex()
 	if len(rd.Entries) != 0 {
 		rn.Raft.RaftLog.stabled = rd.Entries[len(rd.Entries)-1].Index
+	} else if rd.Snapshot.Metadata != nil {
+		rn.Raft.RaftLog.stabled = rd.Snapshot.Metadata.Index
 	}
 	rn.ready = nil
 }

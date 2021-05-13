@@ -438,7 +438,7 @@ In this step, you need to learn two more workers of raftstore — raftlog-gc wor
 
 Raftstore checks whether it needs to gc log from time to time based on the config `RaftLogGcCountLimit`, see `onRaftGcLogTick()`. If yes, it will propose a raft admin command `CompactLogRequest` which is wrapped in `RaftCmdRequest` just like four basic command types(Get/Put/Delete/Snap) implemented in project2 part B. Then you need to process this admin command when it’s committed by Raft. But unlike Get/Put/Delete/Snap commands write or read state machine data, `CompactLogRequest` modifies metadata, namely updates the `RaftTruncatedState` which is in the `RaftApplyState`. After that, you should schedule a task to raftlog-gc worker by `ScheduleCompactLog`. Raftlog-gc worker will do the actual log deletion work asynchronously.
 
-> `Raftstore`根据配置`RaftLogGcCountLimit`检查它是否需要定时回收日志，参见`onRaftGcLogTick()`。如果是，它将提出一个raft admin命令`CompactLogRequest`，该命令被封装在`RaftCmdRequest`中，就像在project2B部分实现的四种基本命令类型(`Get/Put/Delete/Snap`)一样。然后，当Raft提交这个管理命令后，您需要apply它。但不像`Get/Put/Delete/Snap`命令写或读状态机数据，`CompactLogRequest`修改元数据，即更新`RaftTruncatedState`(这个实际上在`peer.PeerStorage.RaftApplyState`上)。在那之后，你应该通过`ScheduleCompactLog`计划一个任务到`raftlog-gc worker`。`Raftlog-gc worker`将异步执行实际的日志删除工作。(除此之外还需要处理内存中的log情况)
+> `Raftstore`根据配置`RaftLogGcCountLimit`检查它是否需要定时回收日志，参见`onRaftGcLogTick()`。如果是，它将发出一个raft admin命令`CompactLogRequest`，该命令被封装在`RaftCmdRequest`中，就像在project2B部分实现的四种基本命令类型(`Get/Put/Delete/Snap`)一样。然后，当Raft提交这个管理命令后，您需要apply它。但不像`Get/Put/Delete/Snap`命令写或读状态机数据，`CompactLogRequest`修改元数据，即更新`RaftTruncatedState`(这个实际上在`peer.PeerStorage.RaftApplyState`上)。在那之后，你应该通过`ScheduleCompactLog`计划一个任务到`raftlog-gc worker`。`Raftlog-gc worker`将异步执行实际的日志删除工作。(除此之外还需要处理内存中的log情况)
 
 Then due to the log compaction, Raft module maybe needs to send a snapshot. `PeerStorage` implements `Storage.Snapshot()`. TinyKV generates snapshots and applies snapshots in the region worker. When calling `Snapshot()`, it actually sends a task `RegionTaskGen` to the region worker. The message handler of the region worker is located in `kv/raftstore/runner/region_task.go`. It scans the underlying engines to generate a snapshot, and sends snapshot metadata by channel. At the next time Raft calling `Snapshot`, it checks whether the snapshot generating is finished. If yes, Raft should send the snapshot message to other peers, and the snapshot sending and receiving work is handled by `kv/storage/raft_storage/snap_runner.go`. You don’t need to dive into the details, only should know the snapshot message will be handled by `onRaftMsg` after the snapshot is received.
 
@@ -479,7 +479,24 @@ TiKV 涉及到的是 1 和 2 这两种情况。**在我们的实现中，Snapsho
 
 ### Q
 
-1. 内存中的log什么时候compact
-   - 最好跟硬盘的log一起，直接删，对leader来说这么干完全没问题 但是对follower来说，如果直接删????
-   - 也可以单干
 2. `snapshot + log = total`
+
+
+
+### TODO
+
+- [x] 能够处理Admin命令
+
+  - 更新元数据
+  - 调用一个worker来执行db中log的compact
+  - reset内存中log的compact
+
+- [ ] Ready时能够处理apply snapshot
+
+  - 当确定应用快照时，可以更新Peer Storage的内存状态，如`RaftLocalState`、`RaftApplyState`和`RegionLocalState`。
+
+  - 另外，不要忘记将这些状态持久化到`kvdb`和`raftdb`，并从`kvdb`和`raftdb`中**删除陈旧的状态**。
+
+  - 此外，你还需要更新`PeerStorage.snapState`为`snap.SnapState_Applying`并且通过`PeerStorage.regionSched`发送`runner.RegionTaskApply`任务给region worker，等待region worker完成它。
+
+- [ ] `RawNode.Advance`进一步更新内部状态: 比如applied

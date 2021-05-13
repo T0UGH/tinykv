@@ -265,6 +265,7 @@ func (ps *PeerStorage) clearMeta(kvWB, raftWB *engine_util.WriteBatch) error {
 }
 
 // Delete all data that is not covered by `new_region`.
+// 清除所有不在new_region范围内的key
 func (ps *PeerStorage) clearExtraData(newRegion *metapb.Region) {
 	oldStartKey, oldEndKey := ps.region.GetStartKey(), ps.region.GetEndKey()
 	newStartKey, newEndKey := newRegion.GetStartKey(), newRegion.GetEndKey()
@@ -276,6 +277,7 @@ func (ps *PeerStorage) clearExtraData(newRegion *metapb.Region) {
 	}
 }
 
+// 删除陈旧的metaData比如raftState, applyState, regionState和raft log entries
 // ClearMeta delete stale metadata like raftState, applyState, regionState and raft log entries
 func ClearMeta(engines *engine_util.Engines, kvWB, raftWB *engine_util.WriteBatch, regionID uint64, lastIndex uint64) error {
 	start := time.Now()
@@ -333,16 +335,48 @@ func (ps *PeerStorage) Append(entries []eraftpb.Entry, raftWB *engine_util.Write
 // Apply the peer with given snapshot
 func (ps *PeerStorage) ApplySnapshot(snapshot *eraftpb.Snapshot, kvWB *engine_util.WriteBatch, raftWB *engine_util.WriteBatch) (*ApplySnapResult, error) {
 	log.Infof("%v begin to apply snapshot", ps.Tag)
+	prevRegion := ps.region
 	snapData := new(rspb.RaftSnapshotData)
 	if err := snapData.Unmarshal(snapshot.Data); err != nil {
 		return nil, err
 	}
-
 	// Hint: things need to do here including: update peer storage state like raftState and applyState, etc,
 	// and send RegionTaskApply task to region worker through ps.regionSched, also remember call ps.clearMeta
 	// and ps.clearExtraData to delete stale data
 	// Your Code Here (2C).
-	return nil, nil
+	// 提示：这里需要做的事情包括:
+	//	- 先调用调用ps.clearMeta和ps.clearExtraData来删除陈旧数据
+	if err := ps.clearMeta(kvWB, raftWB); err != nil {
+		return &ApplySnapResult{PrevRegion: prevRegion, Region: ps.region}, err
+	}
+	// 传newRegion再清除一波
+	ps.clearExtraData(snapData.Region)
+	//	- 更新peer存储状态，例如raftState和applyState等
+	ps.applyState.AppliedIndex = snapshot.Metadata.Index
+	ps.applyState.TruncatedState.Term = snapshot.Metadata.Term
+	ps.applyState.TruncatedState.Index = snapshot.Metadata.Index
+	ps.raftState.LastIndex = snapshot.Metadata.Index
+	ps.raftState.LastTerm = snapshot.Metadata.Term
+	ps.region = snapData.Region
+	// 3 save state
+	if err := raftWB.SetMeta(meta.RaftStateKey(ps.region.Id), ps.raftState); err != nil {
+		return &ApplySnapResult{PrevRegion: prevRegion, Region: ps.region}, err
+	}
+	if err := kvWB.SetMeta(meta.ApplyStateKey(ps.region.Id), ps.applyState); err != nil {
+		return &ApplySnapResult{PrevRegion: prevRegion, Region: ps.region}, err
+	}
+	if err := kvWB.SetMeta(meta.RegionStateKey(ps.region.Id), ps.region); err != nil {
+		return &ApplySnapResult{PrevRegion: prevRegion, Region: ps.region}, err
+	}
+	//	- 并通过ps.regionSched将RegionTaskApply任务发送给region worker
+	ps.regionSched <- &runner.RegionTaskApply{
+		RegionId: ps.region.Id,
+		Notifier: nil,
+		SnapMeta: snapshot.Metadata,
+		StartKey: prevRegion.StartKey,
+		EndKey:   prevRegion.EndKey,
+	}
+	return &ApplySnapResult{PrevRegion: prevRegion, Region: ps.region}, nil
 }
 
 // 将内存中的状态保存到硬盘
@@ -352,9 +386,17 @@ func (ps *PeerStorage) ApplySnapshot(snapshot *eraftpb.Snapshot, kvWB *engine_ut
 func (ps *PeerStorage) SaveReadyState(ready *raft.Ready) (*ApplySnapResult, error) {
 	// Hint: you may call `Append()` and `ApplySnapshot()` in this function
 	// Your Code Here (2B/2C).
-	wb := new(engine_util.WriteBatch)
+	raftWB := new(engine_util.WriteBatch)
+	kvWB := new(engine_util.WriteBatch)
+	// 0 ApplySnapshot
+	if ready.Snapshot.Metadata != nil {
+		_, err := ps.ApplySnapshot(&ready.Snapshot, raftWB, kvWB)
+		if err != nil {
+			return nil, err
+		}
+	}
 	// 1 append log entries
-	if err := ps.Append(ready.Entries, wb); err != nil {
+	if err := ps.Append(ready.Entries, raftWB); err != nil {
 		return nil, err
 	}
 	// 2 update State
@@ -363,13 +405,19 @@ func (ps *PeerStorage) SaveReadyState(ready *raft.Ready) (*ApplySnapResult, erro
 		ps.raftState.LastIndex = lastEntry.Index
 		ps.raftState.LastTerm = lastEntry.Term
 	}
+	if len(ready.CommittedEntries) != 0 {
+		ps.applyState.AppliedIndex = ready.CommittedEntries[len(ready.CommittedEntries)-1].Index
+	}
 	hs := ps.raftState.HardState
 	hs.Term, hs.Commit, hs.Vote = ready.Term, ready.Commit, ready.Vote
 	// 3 save state
-	if err := wb.SetMeta(meta.RaftStateKey(ps.region.Id), ps.raftState); err != nil {
+	if err := raftWB.SetMeta(meta.RaftStateKey(ps.region.Id), ps.raftState); err != nil {
 		return nil, err
 	}
-	if err := ps.Engines.WriteRaft(wb); err != nil {
+	if err := kvWB.SetMeta(meta.ApplyStateKey(ps.region.Id), ps.applyState); err != nil {
+		return nil, err
+	}
+	if err := ps.Engines.WriteRaft(raftWB); err != nil {
 		return nil, err
 	}
 	return nil, nil

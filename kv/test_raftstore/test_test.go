@@ -474,6 +474,7 @@ func TestOneSnapshot2C(t *testing.T) {
 	cluster.Start()
 	defer cluster.Shutdown()
 
+	// 先插入两个值试试
 	cf := engine_util.CfLock
 	cluster.MustPutCF(cf, []byte("k1"), []byte("v1"))
 	cluster.MustPutCF(cf, []byte("k2"), []byte("v2"))
@@ -492,6 +493,7 @@ func TestOneSnapshot2C(t *testing.T) {
 		}
 	}
 
+	// 添加一个分区过滤器
 	cluster.AddFilter(
 		&PartitionFilter{
 			s1: []uint64{1},
@@ -499,7 +501,7 @@ func TestOneSnapshot2C(t *testing.T) {
 		},
 	)
 
-	// write some data to trigger snapshot
+	// write some data to trigger snapshot 写一个数据来触发snapshot
 	for i := 100; i < 115; i++ {
 		cluster.MustPutCF(cf, []byte(fmt.Sprintf("k%d", i)), []byte(fmt.Sprintf("v%d", i)))
 	}
@@ -530,6 +532,7 @@ func TestOneSnapshot2C(t *testing.T) {
 	}
 }
 
+// 因为设置了maxRaftLog所以会产生snapshot, 后面几个都是这样
 func TestSnapshotRecover2C(t *testing.T) {
 	// Test: restarts, snapshots, one client (2C) ...
 	GenericTest(t, "2C", 1, false, true, false, 100, false, false)

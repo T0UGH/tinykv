@@ -399,10 +399,7 @@ func (h *MsgSnapshotHandler) Handle(m pb.Message) error {
 
 	// 更新snapshot, entry, commit, prs
 	h.raft.RaftLog.pendingSnapshot = m.Snapshot
-
-	// todo: 这里直接reset了好不好
-	h.raft.RaftLog.ResetEntry(m.Snapshot.Metadata.Index, m.Snapshot.Metadata.Term)
-	h.raft.RaftLog.UpdateCommit(m.Snapshot.Metadata.Index)
+	h.raft.RaftLog.Reset(m.Snapshot.Metadata.Index, m.Snapshot.Metadata.Term)
 	h.raft.Prs = make(map[uint64]*Progress)
 	for _, id := range m.Snapshot.Metadata.ConfState.Nodes {
 		h.raft.Prs[id] = &Progress{}
