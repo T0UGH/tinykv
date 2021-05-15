@@ -16,7 +16,6 @@ package raft
 
 import (
 	"errors"
-	"github.com/pingcap-incubator/tinykv/log"
 	"math/rand"
 	"time"
 
@@ -441,12 +440,8 @@ func (r *Raft) updateAndBroadCastCommitProgress() {
 }
 
 func (r *Raft) sendSnapshot(to uint64) {
-
-	// todo 如果有err怎么办,
 	snapshot, err := r.RaftLog.storage.Snapshot()
 	if err != nil {
-		// 一个Trick, 造一个假的Response, 这样会在处理完前面的这些消息后Retry Snapshot()
-		// todo: maybe bug, 有可能会因为错误的To和From而被拦截掉
 		return
 	}
 	r.addMsg(pb.Message{

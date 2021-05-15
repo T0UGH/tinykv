@@ -64,7 +64,7 @@ const revokeLeaseTimeout = time.Second
 
 // Close releases the lease.
 func (l *LeaderLease) Close() error {
-	// ResetForSnapshot expire time.
+	// Reset expire time.
 	l.expireTime.Store(time.Time{})
 	// Try to revoke lease to make subsequent elections faster.
 	ctx, cancel := context.WithTimeout(l.client.Ctx(), revokeLeaseTimeout)
