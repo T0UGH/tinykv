@@ -491,7 +491,7 @@ TiKV 涉及到的是 1 和 2 这两种情况。**在我们的实现中，Snapsho
   - 调用一个worker来执行db中log的compact
   - reset内存中log的compact
 
-- [ ] Ready时能够处理apply snapshot
+- [x] Ready时能够处理apply snapshot
 
   - 当确定应用快照时，可以更新Peer Storage的内存状态，如`RaftLocalState`、`RaftApplyState`和`RegionLocalState`。
 
@@ -499,4 +499,4 @@ TiKV 涉及到的是 1 和 2 这两种情况。**在我们的实现中，Snapsho
 
   - 此外，你还需要更新`PeerStorage.snapState`为`snap.SnapState_Applying`并且通过`PeerStorage.regionSched`发送`runner.RegionTaskApply`任务给region worker，等待region worker完成它。
 
-- [ ] `RawNode.Advance`进一步更新内部状态: 比如applied
+- [x] `RawNode.Advance`进一步更新内部状态: 比如applied

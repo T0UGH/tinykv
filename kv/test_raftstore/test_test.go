@@ -480,6 +480,7 @@ func TestOneSnapshot2C(t *testing.T) {
 	cluster.MustPutCF(cf, []byte("k2"), []byte("v2"))
 
 	MustGetCfEqual(cluster.engines[1], cf, []byte("k1"), []byte("v1"))
+
 	MustGetCfEqual(cluster.engines[1], cf, []byte("k2"), []byte("v2"))
 
 	for _, engine := range cluster.engines {
@@ -501,16 +502,19 @@ func TestOneSnapshot2C(t *testing.T) {
 		},
 	)
 
-	// write some data to trigger snapshot 写一个数据来触发snapshot
+	// write some data to trigger snapshot 写很多数据来触发snapshot
 	for i := 100; i < 115; i++ {
 		cluster.MustPutCF(cf, []byte(fmt.Sprintf("k%d", i)), []byte(fmt.Sprintf("v%d", i)))
 	}
 	cluster.MustDeleteCF(cf, []byte("k2"))
 	time.Sleep(500 * time.Millisecond)
+	// 因为发生了分区, 所有s1应该没有k100
 	MustGetCfNone(cluster.engines[1], cf, []byte("k100"))
+
+	// 去掉分区过滤器
 	cluster.ClearFilters()
 
-	// Now snapshot must applied on
+	// Now snapshot must applied on 现在snapshot必须已经被应用上了
 	MustGetCfEqual(cluster.engines[1], cf, []byte("k1"), []byte("v1"))
 	MustGetCfEqual(cluster.engines[1], cf, []byte("k100"), []byte("v100"))
 	MustGetCfNone(cluster.engines[1], cf, []byte("k2"))
@@ -519,6 +523,7 @@ func TestOneSnapshot2C(t *testing.T) {
 	cluster.StartServer(1)
 
 	MustGetCfEqual(cluster.engines[1], cf, []byte("k1"), []byte("v1"))
+	// 检查一下是否真的发生了log的GC
 	for _, engine := range cluster.engines {
 		state, err := meta.GetApplyState(engine.Kv, 1)
 		if err != nil {

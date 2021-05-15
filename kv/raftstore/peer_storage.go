@@ -368,14 +368,16 @@ func (ps *PeerStorage) ApplySnapshot(snapshot *eraftpb.Snapshot, kvWB *engine_ut
 	if err := kvWB.SetMeta(meta.RegionStateKey(ps.region.Id), ps.region); err != nil {
 		return &ApplySnapResult{PrevRegion: prevRegion, Region: ps.region}, err
 	}
+	ch := make(chan bool, 1)
 	//	- 并通过ps.regionSched将RegionTaskApply任务发送给region worker
 	ps.regionSched <- &runner.RegionTaskApply{
 		RegionId: ps.region.Id,
-		Notifier: nil,
+		Notifier: ch,
 		SnapMeta: snapshot.Metadata,
 		StartKey: prevRegion.StartKey,
 		EndKey:   prevRegion.EndKey,
 	}
+	<-ch
 	return &ApplySnapResult{PrevRegion: prevRegion, Region: ps.region}, nil
 }
 
@@ -418,6 +420,9 @@ func (ps *PeerStorage) SaveReadyState(ready *raft.Ready) (*ApplySnapResult, erro
 		return nil, err
 	}
 	if err := ps.Engines.WriteRaft(raftWB); err != nil {
+		return nil, err
+	}
+	if err := ps.Engines.WriteKV(kvWB); err != nil {
 		return nil, err
 	}
 	return nil, nil

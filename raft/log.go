@@ -78,11 +78,10 @@ func newLog(storage Storage) *RaftLog {
 		storageEntries, _ := storage.Entries(firstIndex, lastIndex+1)
 		entries = append(entries, storageEntries...)
 	}
-
 	return &RaftLog{
 		storage:   storage,
 		entries:   entries,
-		applied:   lastIndex, //todo:初始值问题
+		applied:   storage.AppliedIndex(),
 		committed: hardState.Commit,
 		stabled:   lastIndex,
 	}
@@ -212,7 +211,7 @@ func (l *RaftLog) Compact(compactIndex, compactTerm uint64) {
 	var remain []pb.Entry
 	if compactIndex < l.LastIndex() {
 		// todo 这里有个异常没处理
-		remain, _ = l.Entries(compactIndex, l.LastIndex()+1)
+		remain, _ = l.Entries(compactIndex+1, l.LastIndex()+1)
 	}
 	l.entries = make([]pb.Entry, 1)
 	l.entries[0].Index = compactIndex
@@ -220,11 +219,16 @@ func (l *RaftLog) Compact(compactIndex, compactTerm uint64) {
 	if remain != nil {
 		l.entries = append(l.entries, remain...)
 	}
+	log.Infof("here")
 }
 
-func (l *RaftLog) Reset(index, term uint64) {
+func (l *RaftLog) ResetForSnapshot(snapshot *pb.Snapshot) {
 	l.entries = make([]pb.Entry, 1)
-	l.entries[0].Index = index
-	l.entries[0].Term = term
-	l.UpdateCommit(index)
+	l.pendingSnapshot = snapshot
+	l.entries[0].Index = snapshot.Metadata.Index
+	l.applied = snapshot.Metadata.Index
+	l.stabled = snapshot.Metadata.Index
+	l.entries[0].Term = snapshot.Metadata.Term
+	l.UpdateCommit(snapshot.Metadata.Index)
+
 }

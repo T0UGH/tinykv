@@ -16,6 +16,7 @@ package raft
 
 import (
 	"errors"
+	"github.com/pingcap-incubator/tinykv/log"
 	"math/rand"
 	"time"
 
@@ -446,14 +447,7 @@ func (r *Raft) sendSnapshot(to uint64) {
 	if err != nil {
 		// 一个Trick, 造一个假的Response, 这样会在处理完前面的这些消息后Retry Snapshot()
 		// todo: maybe bug, 有可能会因为错误的To和From而被拦截掉
-		r.addMsg(pb.Message{
-			MsgType: pb.MessageType_MsgAppendResponse,
-			To:      r.id,
-			Term:    r.Term,
-			From:    to,
-			Index:   r.Prs[to].Next - 1,
-			Reject:  true,
-		})
+		return
 	}
 	r.addMsg(pb.Message{
 		MsgType:  pb.MessageType_MsgSnapshot,

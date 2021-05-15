@@ -1026,7 +1026,7 @@ func (s *testRegionsInfoSuite) Test(c *C) {
 		c.Assert(cache.SearchRegion(regionKey), IsNil)
 		checkRegions(c, cache, regions[0:i])
 
-		// Reset leader to peer 0.
+		// ResetForSnapshot leader to peer 0.
 		newRegion = region.Clone(core.WithLeader(region.GetPeers()[0]))
 		regions[i] = newRegion
 		cache.AddRegion(newRegion)

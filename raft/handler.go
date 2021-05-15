@@ -340,7 +340,9 @@ func (h *MsgAppendResponseHandler) Handle(m pb.Message) error {
 		}
 		// 向下顺延一位
 		if m.GetIndex()+1 == h.raft.Prs[m.GetFrom()].Next {
-			h.raft.Prs[m.GetFrom()].Next--
+			if h.raft.Prs[m.GetFrom()].Next > h.raft.RaftLog.FirstIndex() {
+				h.raft.Prs[m.GetFrom()].Next--
+			}
 			h.raft.sendAppend(m.GetFrom())
 		}
 		return nil
@@ -387,10 +389,18 @@ func NewMsgSnapshotHandler(raft *Raft) *MsgSnapshotHandler {
 }
 
 func (h *MsgSnapshotHandler) Handle(m pb.Message) error {
+	reply := pb.Message{
+		MsgType: pb.MessageType_MsgAppendResponse,
+		To:      m.GetFrom(),
+		Term:    h.raft.Term,
+		Index:   m.GetIndex(),
+		Reject:  true,
+	}
 	// 1 比谁新, 新的才能被应用, 否则不能被应用
 	// todo 这里的index是跟谁比?
 	if m.GetSnapshot() == nil || m.GetSnapshot().Metadata.Term < h.raft.Term ||
 		m.GetSnapshot().Metadata.Index < h.raft.RaftLog.LastIndex() {
+		h.raft.addMsg(reply)
 		return nil
 	}
 
@@ -398,12 +408,16 @@ func (h *MsgSnapshotHandler) Handle(m pb.Message) error {
 	h.raft.becomeFollower(m.GetSnapshot().Metadata.Term, m.GetFrom())
 
 	// 更新snapshot, entry, commit, prs
-	h.raft.RaftLog.pendingSnapshot = m.Snapshot
-	h.raft.RaftLog.Reset(m.Snapshot.Metadata.Index, m.Snapshot.Metadata.Term)
+	h.raft.RaftLog.ResetForSnapshot(m.Snapshot)
 	h.raft.Prs = make(map[uint64]*Progress)
 	for _, id := range m.Snapshot.Metadata.ConfState.Nodes {
 		h.raft.Prs[id] = &Progress{}
 	}
+
+	reply.Term = h.raft.Term
+	reply.Reject = false
+	reply.Index = h.raft.RaftLog.LastIndex()
+	h.raft.addMsg(reply)
 
 	return nil
 }

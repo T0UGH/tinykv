@@ -298,6 +298,7 @@ func (bs *Raftstore) shutDown() {
 	workers.raftLogGCWorker.Stop()
 	workers.schedulerWorker.Stop()
 	workers.wg.Wait()
+	log.Infof("stoped storeID: %d", bs.ctx.store.Id)
 }
 
 func CreateRaftstore(cfg *config.Config) (*RaftstoreRouter, *Raftstore) {
