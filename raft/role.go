@@ -32,6 +32,7 @@ func NewLeaderRole(raft *Raft) *LeaderRole {
 	handlerMap[pb.MessageType_MsgAppend] = NewMsgAppendHandler(raft)
 	handlerMap[pb.MessageType_MsgAppendResponse] = NewMsgAppendResponseHandler(raft)
 	handlerMap[pb.MessageType_MsgSnapshot] = NewNoopHandler()
+	handlerMap[pb.MessageType_MsgTransferLeader] = NewMsgTransferLeaderHandler(raft)
 	return &LeaderRole{
 		raft:       raft,
 		handlerMap: handlerMap,
@@ -58,7 +59,7 @@ type CandidateRole struct {
 
 func NewCandidateRole(raft *Raft) *CandidateRole {
 	handlerMap := make(map[pb.MessageType]Handler)
-	handlerMap[pb.MessageType_MsgHup] = NewMsgHupHandler(raft)
+	handlerMap[pb.MessageType_MsgHup] = NewMsgHupAndMsgTimeoutNowHandler(raft)
 	handlerMap[pb.MessageType_MsgRequestVote] = NewMsgRequestVoteHandler(raft)
 	handlerMap[pb.MessageType_MsgRequestVoteResponse] = NewCandidateMsgRequestVoteResponseHandler(raft)
 	handlerMap[pb.MessageType_MsgBeat] = NewNoopHandler()
@@ -68,6 +69,8 @@ func NewCandidateRole(raft *Raft) *CandidateRole {
 	handlerMap[pb.MessageType_MsgAppend] = NewMsgAppendHandler(raft)
 	handlerMap[pb.MessageType_MsgAppendResponse] = NewNoopHandler()
 	handlerMap[pb.MessageType_MsgSnapshot] = NewNoopHandler()
+	handlerMap[pb.MessageType_MsgTransferLeader] = NewNotLeaderMsgTransferLeaderHandler(raft)
+	handlerMap[pb.MessageType_MsgTimeoutNow] = NewMsgHupAndMsgTimeoutNowHandler(raft)
 	return &CandidateRole{
 		raft:       raft,
 		handlerMap: handlerMap,
@@ -94,7 +97,7 @@ type FollowerRole struct {
 
 func NewFollowerRole(raft *Raft) *FollowerRole {
 	handlerMap := make(map[pb.MessageType]Handler)
-	handlerMap[pb.MessageType_MsgHup] = NewMsgHupHandler(raft)
+	handlerMap[pb.MessageType_MsgHup] = NewMsgHupAndMsgTimeoutNowHandler(raft)
 	handlerMap[pb.MessageType_MsgRequestVote] = NewMsgRequestVoteHandler(raft)
 	handlerMap[pb.MessageType_MsgRequestVoteResponse] = NewNoopHandler()
 	handlerMap[pb.MessageType_MsgBeat] = NewNoopHandler()
@@ -104,6 +107,8 @@ func NewFollowerRole(raft *Raft) *FollowerRole {
 	handlerMap[pb.MessageType_MsgAppend] = NewMsgAppendHandler(raft)
 	handlerMap[pb.MessageType_MsgAppendResponse] = NewNoopHandler()
 	handlerMap[pb.MessageType_MsgSnapshot] = NewMsgSnapshotHandler(raft)
+	handlerMap[pb.MessageType_MsgTransferLeader] = NewNotLeaderMsgTransferLeaderHandler(raft)
+	handlerMap[pb.MessageType_MsgTimeoutNow] = NewMsgHupAndMsgTimeoutNowHandler(raft)
 	return &FollowerRole{
 		handlerMap: handlerMap,
 		raft:       raft,

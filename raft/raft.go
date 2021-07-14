@@ -257,6 +257,10 @@ func (r *Raft) sendAppend(to uint64) bool {
 		Term:    r.Term,
 		From:    r.id,
 	}
+	// 防止这个节点已经被remove了
+	if r.Prs[to] == nil {
+		return false
+	}
 	entries, err := r.RaftLog.Entries(r.Prs[to].Next, r.RaftLog.LastIndex()+1)
 	// 如果过界, 就改成发snapshot
 	if err == ErrCompacted {
@@ -293,6 +297,7 @@ func (r *Raft) becomeFollower(term uint64, lead uint64) {
 	r.State = StateFollower
 	r.Term = term
 	r.Lead = lead
+	r.leadTransferee = 0
 	r.resetElectionClock()
 	// 清空进度
 	for i := range r.Prs {
@@ -382,11 +387,16 @@ func (r *Raft) handleSnapshot(m pb.Message) {
 // addNode add a new node to raft group
 func (r *Raft) addNode(id uint64) {
 	// Your Code Here (3A).
+	r.Prs[id] = &Progress{}
 }
 
 // removeNode remove a node from raft group
 func (r *Raft) removeNode(id uint64) {
 	// Your Code Here (3A).
+	delete(r.Prs, id)
+	matches := ExtractProgressForMatches(r.Prs)
+	commit := CalcCommit(matches)
+	r.RaftLog.UpdateCommit(commit)
 }
 
 func (r *Raft) addMsg(m pb.Message) {

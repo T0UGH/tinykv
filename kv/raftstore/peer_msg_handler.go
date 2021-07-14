@@ -48,7 +48,15 @@ func (d *peerMsgHandler) HandleRaftReady() {
 	// Your Code Here (2B).
 	rd := d.RaftGroup.Ready()
 	for _, entry := range rd.CommittedEntries {
-		d.ApplyEntry(entry)
+		if entry.EntryType == eraftpb.EntryType_EntryConfChange {
+			var cc eraftpb.ConfChange
+			if err := cc.Unmarshal(entry.Data); err != nil {
+				panic(err)
+			}
+			d.RaftGroup.ApplyConfChange(cc)
+		} else {
+			d.ApplyEntry(entry)
+		}
 	}
 	// todo 异常处理是否对
 	// 先保存后发送消息

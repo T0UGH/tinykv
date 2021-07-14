@@ -108,17 +108,21 @@ func (h *CandidateMsgHeartbeatHandler) Handle(m pb.Message) error {
 	return nil
 }
 
-type MsgHupHandler struct {
+type MsgHupAndMsgTimeoutNowHandler struct {
 	raft *Raft
 }
 
-func NewMsgHupHandler(raft *Raft) *MsgHupHandler {
-	return &MsgHupHandler{raft: raft}
+func NewMsgHupAndMsgTimeoutNowHandler(raft *Raft) *MsgHupAndMsgTimeoutNowHandler {
+	return &MsgHupAndMsgTimeoutNowHandler{raft: raft}
 }
 
 // 如果follower或candidate在选举超时之前未收到任何心跳，它将`MessageType_MsgHup`传递给其Step方法，
 // 并成为（或保持）候选人来开始新的选举。
-func (h *MsgHupHandler) Handle(m pb.Message) error {
+func (h *MsgHupAndMsgTimeoutNowHandler) Handle(m pb.Message) error {
+	// 0 如果这个节点已经不在Prs中,说明它已经被移除了集群, 就noop
+	if h.raft.Prs[h.raft.id] == nil {
+		return nil
+	}
 	// 1 变成Candidate
 	// todo 此处可能需要更改更多状态字段, 需要注意一下
 	h.raft.becomeCandidate()
@@ -251,7 +255,10 @@ func NewLeaderMsgProposeHandler(raft *Raft) *LeaderMsgProposeHandler {
 // 领导者首先调用`appendEntry`方法以将条目追加到其日志中，
 // 然后调用`bcastAppend`方法将这些条目发送给其所有对等方。
 func (h *LeaderMsgProposeHandler) Handle(m pb.Message) error {
-
+	// 正在leaderTransfer时不处理任何消息
+	if h.raft.leadTransferee != 0 {
+		return nil
+	}
 	// 先给entries添加一些额外信息
 	for i, e := range m.Entries {
 		e.Term = h.raft.Term
@@ -338,6 +345,10 @@ func (h *MsgAppendResponseHandler) Handle(m pb.Message) error {
 		if m.GetTerm() > h.raft.Term {
 			return nil
 		}
+		// 已经移除的节点直接停
+		if h.raft.Prs[m.GetFrom()] == nil {
+			return nil
+		}
 		// 向下顺延一位
 		if m.GetIndex()+1 == h.raft.Prs[m.GetFrom()].Next {
 			if h.raft.Prs[m.GetFrom()].Next > h.raft.RaftLog.FirstIndex() {
@@ -353,6 +364,15 @@ func (h *MsgAppendResponseHandler) Handle(m pb.Message) error {
 	h.raft.Prs[m.GetFrom()].Match = m.GetIndex()
 	h.raft.Prs[m.GetFrom()].Next = max(h.raft.Prs[m.GetFrom()].Next, m.GetIndex()+1)
 	h.raft.updateAndBroadCastCommitProgress()
+	//
+	if h.raft.leadTransferee == m.From {
+		leadTransferMsg := pb.Message{
+			MsgType: pb.MessageType_MsgTransferLeader,
+			To:      h.raft.id,
+			From:    m.GetFrom(),
+		}
+		h.raft.msgs = append(h.raft.msgs, leadTransferMsg)
+	}
 	return nil
 }
 
@@ -374,6 +394,9 @@ func NewMsgHeartBeatResponseHandler(raft *Raft) *MsgHeartBeatResponseHandler {
 }
 
 func (h *MsgHeartBeatResponseHandler) Handle(m pb.Message) error {
+	if h.raft.Prs[m.GetFrom()] == nil {
+		return nil
+	}
 	if h.raft.Prs[h.raft.id].Match > h.raft.Prs[m.GetFrom()].Match {
 		h.raft.sendAppend(m.GetFrom())
 	}
@@ -419,5 +442,64 @@ func (h *MsgSnapshotHandler) Handle(m pb.Message) error {
 	reply.Index = h.raft.RaftLog.LastIndex()
 	h.raft.addMsg(reply)
 
+	return nil
+}
+
+type MsgTransferLeaderHandler struct {
+	raft *Raft
+}
+
+func NewMsgTransferLeaderHandler(raft *Raft) *MsgTransferLeaderHandler {
+	return &MsgTransferLeaderHandler{raft: raft}
+}
+
+func (h *MsgTransferLeaderHandler) Handle(m pb.Message) error {
+	// 如果当前在transfer给其他节点pending,又收到一条transfer给自己,就重开一轮选举
+	if h.raft.leadTransferee != 0 && m.From == h.raft.id {
+		return h.raft.Step(pb.Message{From: h.raft.id, To: h.raft.id, MsgType: pb.MessageType_MsgHup})
+	}
+	//如果是transfer给自己, 直接不做处理，因为leader本来就是自己
+	if m.From == h.raft.id {
+		return nil
+	}
+	//如果这个节点不在集群中, 也不做任何处理
+	if h.raft.Prs[m.From] == nil {
+		return nil
+	}
+	//1 先更新标记
+	h.raft.leadTransferee = m.From
+	//2 检查新不新 todo 这里检查新不新的判定条件对不对
+	if h.raft.Prs[m.From].Match == h.raft.Prs[h.raft.id].Match {
+		//2.2 新就发一个MsgTimeout给受让者
+		timeoutReq := pb.Message{
+			MsgType: pb.MessageType_MsgTimeoutNow,
+			To:      m.GetFrom(),
+			Term:    h.raft.Term,
+			Index:   m.GetIndex(),
+			Reject:  true,
+		}
+		h.raft.addMsg(timeoutReq)
+		return nil
+	}
+	//2.1 不新就先让他新，并且停止accept proposal
+	h.raft.sendAppend(m.GetFrom())
+	return nil
+}
+
+type NotLeaderMsgTransferLeaderHandler struct {
+	raft *Raft
+}
+
+func NewNotLeaderMsgTransferLeaderHandler(raft *Raft) *NotLeaderMsgTransferLeaderHandler {
+	return &NotLeaderMsgTransferLeaderHandler{raft: raft}
+}
+
+func (h *NotLeaderMsgTransferLeaderHandler) Handle(m pb.Message) error {
+	transReq := pb.Message{
+		MsgType: pb.MessageType_MsgTransferLeader,
+		To:      h.raft.Lead,
+		From:    m.From,
+	}
+	h.raft.msgs = append(h.raft.msgs, transReq)
 	return nil
 }

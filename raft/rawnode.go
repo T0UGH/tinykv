@@ -16,8 +16,6 @@ package raft
 
 import (
 	"errors"
-	"github.com/pingcap-incubator/tinykv/log"
-
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
 
@@ -92,10 +90,14 @@ type RawNode struct {
 // 根据给定配置生成一个新的RawNode，上层用的
 func NewRawNode(config *Config) (*RawNode, error) {
 	// Your Code Here (2A).
+	hs, _, _ := config.Storage.InitialState()
 	raft := newRaft(config)
 	rawNode := &RawNode{
-		Raft:  raft,
-		ready: nil,
+		Raft: raft,
+		ready: &Ready{
+			HardState: hs,
+			SoftState: &SoftState{raft.Lead, raft.State},
+		},
 	}
 	return rawNode, nil
 }
@@ -173,25 +175,29 @@ func (rn *RawNode) Step(m pb.Message) error {
 // Ready returns the current point-in-time state of this RawNode.
 func (rn *RawNode) Ready() Ready {
 	// Your Code Here (2A).
-	if rn.ready == nil {
-		rn.ready = &Ready{}
-		// HardState
-		rn.ready.HardState = pb.HardState{}
-		rn.ready.HardState.Term = rn.Raft.Term
-		rn.ready.HardState.Vote = rn.Raft.Vote
-		rn.ready.HardState.Commit = rn.Raft.RaftLog.committed
-		// Entries
-		rn.ready.Entries = rn.Raft.RaftLog.unstableEntries()
-		// todo 2C 加Snapshot
-		if rn.Raft.RaftLog.pendingSnapshot != nil {
-			rn.ready.Snapshot = *rn.Raft.RaftLog.pendingSnapshot
-			rn.Raft.RaftLog.pendingSnapshot = nil
-		}
-		// CommittedEntries
-		rn.ready.CommittedEntries = rn.Raft.RaftLog.nextEnts()
-		// Messages
-		rn.ready.Messages = rn.Raft.msgs
+	rn.ready = &Ready{}
+	// SoftState
+	rn.ready.SoftState = &SoftState{
+		Lead:      rn.Raft.Lead,
+		RaftState: rn.Raft.State,
 	}
+	// HardState
+	rn.ready.HardState = pb.HardState{}
+	rn.ready.HardState.Term = rn.Raft.Term
+	rn.ready.HardState.Vote = rn.Raft.Vote
+	rn.ready.HardState.Commit = rn.Raft.RaftLog.committed
+	// Entries
+	rn.ready.Entries = rn.Raft.RaftLog.unstableEntries()
+	// todo 2C 加Snapshot
+	if rn.Raft.RaftLog.pendingSnapshot != nil {
+		rn.ready.Snapshot = *rn.Raft.RaftLog.pendingSnapshot
+		rn.Raft.RaftLog.pendingSnapshot = nil
+	}
+	// CommittedEntries
+	rn.ready.CommittedEntries = rn.Raft.RaftLog.nextEnts()
+	// Messages
+	rn.ready.Messages = rn.Raft.msgs
+
 	return *rn.ready
 }
 
@@ -199,7 +205,25 @@ func (rn *RawNode) Ready() Ready {
 // HasReady called when RawNode user need to check if any Ready pending.
 func (rn *RawNode) HasReady() bool {
 	// Your Code Here (2A).
-	return rn.ready != nil
+	if len(rn.Raft.RaftLog.unstableEntries()) != 0 || len(rn.Raft.RaftLog.nextEnts()) != 0 || len(rn.Raft.msgs) != 0 {
+		return true
+	}
+
+	// pb.hardState
+	if rn.ready.Term != rn.Raft.Term || rn.ready.Vote != rn.Raft.Vote || rn.ready.Commit != rn.Raft.RaftLog.committed {
+		return true
+	}
+
+	// SoftState
+	if rn.ready.Lead != rn.Raft.Lead || rn.ready.RaftState != rn.Raft.State {
+		return true
+	}
+
+	if !IsEmptySnap(rn.Raft.RaftLog.pendingSnapshot) {
+		return true
+	}
+
+	return false
 }
 
 // Advance通知RawNode: APP已经被提交并且保存状态了 in the last Ready results
@@ -222,7 +246,6 @@ func (rn *RawNode) Advance(rd Ready) {
 	} else if rd.Snapshot.Metadata != nil {
 		rn.Raft.RaftLog.stabled = rd.Snapshot.Metadata.Index
 	}
-	rn.ready = nil
 }
 
 // 获取进度

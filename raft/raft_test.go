@@ -1265,6 +1265,7 @@ func TestCampaignWhileLeader2AA(t *testing.T) {
 
 // TestCommitAfterRemoveNode verifies that pending commands can become
 // committed when a config change reduces the quorum requirements.
+// TestCommitAfterRemoveNode 验证当配置变化至少了quorum的需求时，挂起的命令是否可以变成已提交
 func TestCommitAfterRemoveNode3A(t *testing.T) {
 	// Create a cluster with two nodes.
 	s := NewMemoryStorage()
@@ -1294,6 +1295,7 @@ func TestCommitAfterRemoveNode3A(t *testing.T) {
 	ccIndex := r.RaftLog.LastIndex()
 
 	// While the config change is pending, make another proposal.
+	// 当config change正在pending时, 再来另一个proposal
 	r.Step(pb.Message{
 		MsgType: pb.MessageType_MsgPropose,
 		Entries: []*pb.Entry{
@@ -1331,6 +1333,8 @@ func TestCommitAfterRemoveNode3A(t *testing.T) {
 
 // TestLeaderTransferToUpToDateNode verifies transferring should succeed
 // if the transferee has the most up-to-date log entries when transfer starts.
+// TestLeaderTransferToUpToDateNode验证在transfer开始时，
+// 如果受让方拥有最新的日志条目，则transfer应成功。
 func TestLeaderTransferToUpToDateNode3A(t *testing.T) {
 	nt := newNetwork(nil, nil, nil)
 	nt.send(pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgHup})
@@ -1359,6 +1363,9 @@ func TestLeaderTransferToUpToDateNode3A(t *testing.T) {
 // Not like TestLeaderTransferToUpToDateNode, where the leader transfer message
 // is sent to the leader, in this test case every leader transfer message is sent
 // to the follower.
+// TestLeaderTransferToDateNodeFromFollower验证在传输开始时，如果受让方拥有最新的日志条目，则传输应成功。
+// 与TestLeaderTransferToUpToDateNode不同（传输消息被发送给leader)，
+// 在这个测试用例中，每个leader传输消息都被发送给follower。
 func TestLeaderTransferToUpToDateNodeFromFollower3A(t *testing.T) {
 	nt := newNetwork(nil, nil, nil)
 	nt.send(pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgHup})
@@ -1475,6 +1482,7 @@ func TestLeaderTransferRemoveNode3A(t *testing.T) {
 }
 
 // TestLeaderTransferBack verifies leadership can transfer back to self when last transfer is pending.
+// TestLeaderTransferBack验证当上一个transfer正在pending时, 领导权可以被transfer back回自己
 func TestLeaderTransferBack3A(t *testing.T) {
 	nt := newNetwork(nil, nil, nil)
 	nt.send(pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgHup})
@@ -1493,6 +1501,7 @@ func TestLeaderTransferBack3A(t *testing.T) {
 
 // TestLeaderTransferSecondTransferToAnotherNode verifies leader can transfer to another node
 // when last transfer is pending.
+// TestLeaderTransferSecondTransferToAnotherNode验证领导权可以被transfer给另一个节点, 当上一个transfer在pending时
 func TestLeaderTransferSecondTransferToAnotherNode3A(t *testing.T) {
 	nt := newNetwork(nil, nil, nil)
 	nt.send(pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgHup})

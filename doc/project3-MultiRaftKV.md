@@ -2,9 +2,13 @@
 
 In project2, you have built a high available kv server based on Raft, good work! But not enough, such kv server is backed by a single raft group which is not unlimited scalable, and every write request will wait until committed and then write to badger one by one, which is a key requirement to ensure consistency, but also kill any concurrency.
 
+> 在project2, 你已经构建了一个基于Raft的高可用kv服务器，干得好！但这还不够，这样的kv服务器是由一个单个的raft group支持的，并不能达到无限的可伸缩行。并且每个写请求都会等待提交，然后一个一个地写给badger；这确保了一致性，但扼杀了任何并发性。
+
 ![multiraft](imgs/multiraft.png)
 
 In this project you will implement a multi raft-based kv server with balance scheduler, which consist of multiple raft groups, each raft group is responsible for a single key range which is named region here, the layout will be looked like the above diagram. Requests to a single region are handled just like before, yet multiple regions can handle requests concurrently which improves performance but also bring some new challenges like balancing the request to each region, etc.
+
+> 在这个项目中，您将实现一个基于multi raft的带有平衡调度程序的kv服务器。它包括多个raft group，每个raft group负责一个key范围，称为Region，架构如上图。对于单个Region的请求像以前一样被处理，但多个Region可以同时处理请求，这提高了性能，但也带来了一些新的挑战，如将请求平衡分配到每个region等。
 
 This project has 3 part, including:
 
@@ -12,21 +16,99 @@ This project has 3 part, including:
 2. Implement conf change and region split on raftstore
 3. Introduce scheduler
 
+> 这个project分为3个部分，包括
+>
+> 1. 在Raft算法中实现成员变更(membership change)和领导变更(leadership change)
+> 2. 在raftstore上实现配置变更(conf change)和region分裂(region split)
+> 3. 实现调度器
+
 ## Part A
 
 In this part you will implement membership change and leadership change to the basic raft algorithm, these features are required by the next two parts. Membership change, namely conf change, is used to add or remove peers to the raft group, which can change the quorum of the raft group, so be careful. Leadership change, namely leader transfer, is used to transfer the leadership to another peer, which is very useful for balance.
+
+> 在本部分中，您将实现基本raft算法的成员变更和领导变更，这些特性是后面两部分所需要的。成员变更，即conf change，用于向Raft group添加或删除peer，这可能会改变raft group的quorum(大多数)，所以要小心。领导变更，即leader transfer，是用来将领导权转移到另一个peer，这对于负载均衡非常有用。
 
 ### The Code
 
 The code you need to modify is all about `raft/raft.go` and `raft/rawnode.go`, also see `proto/proto/eraft.proto` for new messages you need to handle. And both conf change and leader transfer are triggered by the upper application, so you may want to start at `raft/rawnode.go`.
 
+> 你需要修改的所有代码都在`raft/raft.go`和`raft/rawnode.go`中，你也可以看看`proto/proto/eraft.Proto`，来了解你需要处理的新的消息类型。而conf change和leader transfer都是由上层应用程序触发，所以你可能要从`raft/rawnode.go`开始。
+
 ### Implement leader transfer
 
-To implement leader transfer, let’s introduce two new message types: `MsgTransferLeader` and `MsgTimeoutNow`. To transfer leadership you need to first call `raft.Raft.Step` with `MsgTransferLeader` message on the current leader, and to ensure the success of the transfer, the current leader should first check the qualification of the transferee (namely transfer target) like: is the transferee’s log up to date, etc. If the transferee is not qualified, the current leader can choose to abort the transfer or help the transferee, since abort is not helping, let’s choose to help the transferee. If the transferee’s log is not up to date, the current leader should send a `MsgAppend` message to the transferee and stop accepting new proposals in case we end up cycling. So if the transferee is qualified (or after the current leader’s help), the leader should send a `MsgTimeoutNow` message to the transferee immediately, and after receiving a `MsgTimeoutNow` message the transferee should start a new election immediately regardless of its election timeout, with a higher term and up to date log, the transferee has great chance to step down the current leader and become the new leader.
+To implement leader transfer, let’s introduce two new message types: `MsgTransferLeader` and `MsgTimeoutNow`. To transfer leadership you need to first call `raft.Raft.Step` with `MsgTransferLeader` message on the current leader, and to ensure the success of the transfer, the current leader should first check the qualification of the transferee (namely transfer target) like: is the transferee’s log up to date, etc. If the transferee is not qualified, the current leader can choose to abort the transfer or help the transferee, since abort is not helping, let’s choose to help the transferee. If the transferee’s log is not up to date, the current leader should send a `MsgAppend` message to the transferee and **stop accepting new proposals in case we end up cycling**. So if the transferee is qualified (or after the current leader’s help), the leader should send a `MsgTimeoutNow` message to the transferee immediately, and after receiving a `MsgTimeoutNow` message the transferee should start a new election immediately regardless of its election timeout, with a higher term and up to date log, the transferee has great chance to step down the current leader and become the new leader.
+
+> 为了实现leader transfer，让我们引入两个新的消息类型:`MsgTransferLeader`和`MsgTimeoutNow`。转移领导权首先需要用`MsgTransferLeader`类型的信息来调用当前的领导者的`Step`方法。为了确保成功的转移,现任领导者应该首先检查受让者的资格，比如:受让者的日志是最新的,等等。如果受让者不合格，当前领导者可以选择中止转移或者帮助受让者，我们的实现选择帮助受让者。如果受让者的日志不是最新的，当前领导应该发送一个`MsgAppend`消息给受让者，并停止accept新的proposal(以防我们结束循环 > 啥叫结束循环)。如果受让者是合格的(或在当前领导的帮助下合格了)，领导应该立即发送一个`MsgTimeoutNow`消息给受让者，在收到`MsgTimeoutNow`消息后，受让者应该立即开始新的选举，而不管它的选举时钟是否超时。有一个更高的term和最新的log，受让者有很大的机会选举成为新的领导人。
+
+#### 扩展阅读 raft phd paper section 3.10
+
+
+
+本节描述了Raft的一个可选扩展，它允许一个服务器将其领导权转移给另一个服务器。在两种情况下，领导权的转移可能是有用的:
+
+1. 有时候领导必须下台。例如，它可能需要重新启动进行维护，或者可能会从集群中删除(请参见第4章)。当它退出时，集群将在选举超时前处于空闲状态，直到另一台服务器超时并赢得选举。这种短暂的不可用可以通过让领导在下台前将其领导权转移到另一台服务器来避免。
+2. 在某些情况下，一台或多台服务器可能比其他服务器更适合领导集群。例如，高负载的服务器不是一个好的领导者，或者在广域网部署中，为了最大限度地减少客户端和领导者之间的延迟，主数据中心中的服务器可能是首选。其他共识算法可能能够在领导人选举期间适应这些偏好，但是Raft需要一个具有足够最新日志的服务器来成为领导人，这可能不是最受欢迎的服务器。相反，Raft中的领导者可以定期检查其可用的追随者中是否有一个更合适，如果是，将其领导转移到该服务器。
+
+
+
+为了在Raft中转移领导权，前一个领导者将其日志条目发送到目标服务器，然后目标服务器运行选举，而不等待选举超时时钟。因此，**前一个领导者确保目标服务器在其任期开始时拥有所有已提交的条目**，并且与正常选举一样，多数派投票保证安全属性(如领导者完整性属性)得到维护。
+
+
+
+以下步骤更详细地描述了该过程:
+
+1. 前任领导停止接受新的客户请求
+2. 前一个领导者使用第3.5节中描述的正常日志复制机制，完全更新目标服务器的日志以匹配其自己的日志。
+3. 前一个领导者向目标服务器发送超时请求。该请求与目标服务器的选举计时器触发具有相同的效果:目标服务器开始新的选举(增加其任期并成为候选人)。
+
+
+
+一旦目标服务器收到TimeoutNow请求，它极有可能比任何其他服务器先开始选举，并在下一个任期成为领导者。它给前任领导的下一个信息将包括它的新任期编号，导致前任领导下台。至此，领导交接完成。
+
+
+
+目标服务器也有可能失败；在这种情况下，群集必须恢复客户端操作。**如果在大约一个选举超时的时候后，领导移交没有完成，前任领导将中止移交，并继续接受客户请求**。如果之前的领导者是错误的，并且目标服务器实际上是可操作的，那么在最坏的情况下，这种错误将导致一次额外的选举，之后客户端操作将被恢复。
+
+
+
+这种方法通过在Raft集群的正常转换中运行来保持**安全**性。例如，即使时钟以任意速度运行，Raft也已经保证了安全性；当目标服务器收到TimeoutNow请求时，**相当于目标服务器的时钟快速向前跳跃**，这是安全的。
+
+
+
+#### TODO
+
+- [x] 完成`MsgTransferLeaderHandler`
+- [x] 把`LeaderMsgProposeHandler`改成当`h.raft.leadTransferee == 0`时就直接丢弃消息
+- [x] 在`becomeFollower`时，将`h.raft.leadTransferee`更新回来
+- [x] 如果`leadTransferee !=0`并且 `MsgAppendResponseHandler`收到了来自这个`leadTransferee`的`Resp`，就发一个`TransferLeaderMsg`给自己，再看看现在能不能`TransferLeaderMsg`
+- [x] 完成`MsgTimeoutHandler`
+- [ ] 最后，就是如果超时了如何处理？按照论文中的处理吗？
+
+
 
 ### Implement conf change
 
 Conf change algorithm you will implement here is not the joint consensus algorithm mentioned in the extended Raft paper that can add and/or remove arbitrary peers at once, instead, it can only add or remove peers one by one, which is more simple and easy to reason about. Moreover, conf change start at calling leader’s `raft.RawNode.ProposeConfChange` which will propose an entry with `pb.Entry.EntryType` set to `EntryConfChange` and `pb.Entry.Data` set to the input `pb.ConfChange`. When entries with type `EntryConfChange` are committed, you must apply it through `RawNode.ApplyConfChange` with the `pb.ConfChange` in the entry, only then you can add or remove peer to this raft node through `raft.Raft.addNode` and `raft.Raft.removeNode` according to the `pb.ConfChange`.
+
+> 您将在这里实现的Conf change算法不是在扩展Raft论文中提到的联合共识算法，论文中的算法可以一次性添加和/或删除任意peer。相反，我们实现的算法只能一个一个地添加或删除对等点，这更简单，也更容易推理。此外，conf change开始于调用leader的`raft.RawNode.ProposeConfChange`，它会propose一个类型为`EntryConfChange`、`Data`中存放输入的`pb.ConfChange`的`entry`。当类型为`EntryConfChange`的entries被提交了，你必须传入entry中的`pb.ConfChange`作为参数来调用`RawNode.ApplyConfChange`以apply这个entry。只有在这之后，你才能通过`raft.Raft.addNode`和`raft.Raft.removeNode`来添加或删除peer到这个raft节点。
+>
+> 重点
+>
+> - 一次添加一个节点或删除一个节点
+> - 先看`raft.RawNode.ProposeConfChange()`，`ent := pb.Entry{EntryType: pb.EntryType_EntryConfChange, Data: data}`
+> - 然后提交的时候，判断entry的类型来做不同的操作
+>
+> todo:
+>
+> - [x] 实现`raft/raft.go/addNode`和`raft/raft.go/removeNode`，简单来说就是往`Prs`里面加key删key
+> - [x] 直接改`Prs`有可能会引发各种级联效应，需要处理，
+>   - [ ] 甚至会改变quorum，这样会导致committed不是单增的，不能让committed回退
+>   - [x] 然后很多地方还需要加上判断`prs[id]`现在在不在的判定，如果不在也是需要一番额外操作
+> - [x] 改`HandleRaftReady`的逻辑
+> - [ ] q: 除了在prs上边删除这些节点还需要进行哪些操作？如果是leader是否需要将它转换为follower然后停止接收命令?
+> - [ ] Only one conf change may be pending (in the log, but not yet applied) at a time. This is enforced via PendingConfIndex, which is set to a value >= the log index of the latest pending configuration change (if any). Config changes are only allowed to be proposed if the leader's applied index is greater than this value.
+
+
 
 > Hints:
 >
@@ -34,6 +116,13 @@ Conf change algorithm you will implement here is not the joint consensus algorit
 > - You set the `Message.from` of the `MsgTransferLeader` message to the transferee (namely transfer target)
 > - To start a new election immediately you can call `Raft.Step` with `MsgHup` message
 > - Call `pb.ConfChange.Marshal` to get bytes represent of `pb.ConfChange` and put it to `pb.Entry.Data`
+
+> Hints:
+>
+> - `MsgTransferLeader`消息是本地消息，不是来自网络
+> - 你把`MsgTransferLeader`消息的`message.from`设置为受让人
+> - 要立即开始新的选举，你可以使用`MsgHup`消息来调用`Raft.Step`
+> - 调用`pb.confchange.marshal`将`pb.ConfChange`转换为bytes，然后将转换后的bytes放到`pb.Entry.Data`中
 
 ## Part B
 

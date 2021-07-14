@@ -32,6 +32,8 @@ func (s *ignoreSizeHintMemStorage) Entries(lo, hi uint64, maxSize uint64) ([]pb.
 
 // TestRawNodeProposeAndConfChange ensures that RawNode.Propose and RawNode.ProposeConfChange
 // send the given proposal and ConfChange to the underlying raft.
+// TestRawNodeProposeAndConfChange确保RawNode.Propose和RawNode.ProposeConfChange
+// 将给定的Proposal和ConfChange发送到基础raft。
 func TestRawNodeProposeAndConfChange3A(t *testing.T) {
 	s := NewMemoryStorage()
 	var err error
