@@ -149,7 +149,6 @@ func (c *Cluster) Shutdown() {
 	for _, dir := range c.dirs {
 		os.RemoveAll(dir)
 	}
-	log.Infof("done")
 }
 
 func (c *Cluster) AddFilter(filter Filter) {
@@ -370,7 +369,8 @@ func (c *Cluster) Scan(start, end []byte) [][]byte {
 		if resp.Responses[0].CmdType != raft_cmdpb.CmdType_Snap {
 			panic("resp.Responses[0].CmdType != raft_cmdpb.CmdType_Snap")
 		}
-		region := resp.Responses[0].GetSnap().Region
+		// todo:
+		region := c.GetRegion(key)
 		iter := raft_storage.NewRegionReader(txn, *region).IterCF(engine_util.CfDefault)
 		for iter.Seek(key); iter.Valid(); iter.Next() {
 			if engine_util.ExceedEndKey(iter.Item().Key(), end) {

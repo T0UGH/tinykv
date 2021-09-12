@@ -353,7 +353,7 @@ After this the whole process of a read or write would be like this:
 >
 > - 客户端调用RPC `RawGet`/`RawPut`/`RawDelete`/`RawScan`
 > - RPC处理程序调用与`RaftStorage`相关的方法
-> - `RaftStorage`向raftstore发送一个Raft命令请求，并等待响应
+> - `RaftStorage`向`raftstore`发送一个Raft命令请求，并等待响应
 > - `RaftStore` propose这个Raft指令请求作为一个raft日志
 > - Raft模块追加日志，并通过`PeerStorage`持久化
 > - Raft模块提交日志
@@ -404,6 +404,7 @@ In this stage, you may consider these errors, and others will be processed in pr
 > - 您可以像TiKV那样以异步方式apply已提交的Raft日志条目。虽然这不是必须的，但却是提高性能的一大挑战。
 > - 在proposing时记录命令的回调，并在applying后返回回调。
 > - For the snap command response, should set badger Txn to callback explicitly.
+> - 对于sanp操作的回复，需要在callback中设置一个badger的Txn
 
 
 

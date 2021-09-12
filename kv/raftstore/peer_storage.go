@@ -328,7 +328,6 @@ func (ps *PeerStorage) Append(entries []eraftpb.Entry, raftWB *engine_util.Write
 			return err
 		}
 	}
-	//todo: 这里先不考虑删除的情况, 因为处理起来过于麻烦了
 	return nil
 }
 
@@ -357,7 +356,6 @@ func (ps *PeerStorage) ApplySnapshot(snapshot *eraftpb.Snapshot, kvWB *engine_ut
 	ps.applyState.TruncatedState.Index = snapshot.Metadata.Index
 	ps.raftState.LastIndex = snapshot.Metadata.Index
 	ps.raftState.LastTerm = snapshot.Metadata.Term
-	ps.region = snapData.Region
 	// 3 save state
 	if err := raftWB.SetMeta(meta.RaftStateKey(ps.region.Id), ps.raftState); err != nil {
 		return &ApplySnapResult{PrevRegion: prevRegion, Region: ps.region}, err

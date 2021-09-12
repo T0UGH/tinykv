@@ -219,7 +219,6 @@ func (l *RaftLog) Compact(compactIndex, compactTerm uint64) {
 	if remain != nil {
 		l.entries = append(l.entries, remain...)
 	}
-	log.Infof("here")
 }
 
 func (l *RaftLog) ResetForSnapshot(snapshot *pb.Snapshot) {

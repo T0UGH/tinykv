@@ -41,7 +41,7 @@ func NewServer(storage storage.Storage) *Server {
 // Raw API.
 func (server *Server) RawGet(_ context.Context, req *kvrpcpb.RawGetRequest) (*kvrpcpb.RawGetResponse, error) {
 	// Your Code Here (1).
-	reader, err := server.storage.Reader(nil)
+	reader, err := server.storage.Reader(req.Context)
 	defer reader.Close()
 	if err != nil {
 		return &kvrpcpb.RawGetResponse{Error: err.Error()}, err
@@ -74,7 +74,7 @@ func (server *Server) RawPut(_ context.Context, req *kvrpcpb.RawPutRequest) (*kv
 		Cf:    req.Cf,
 	}
 	batch = append(batch, storage.Modify{Data: data})
-	err := server.storage.Write(nil, batch)
+	err := server.storage.Write(req.Context, batch)
 
 	if err != nil {
 		return &kvrpcpb.RawPutResponse{
@@ -93,7 +93,7 @@ func (server *Server) RawDelete(_ context.Context, req *kvrpcpb.RawDeleteRequest
 		Cf:  req.Cf,
 	}
 	batch = append(batch, storage.Modify{Data: data})
-	err := server.storage.Write(nil, batch)
+	err := server.storage.Write(req.Context, batch)
 
 	if err != nil {
 		return &kvrpcpb.RawDeleteResponse{
@@ -106,7 +106,7 @@ func (server *Server) RawDelete(_ context.Context, req *kvrpcpb.RawDeleteRequest
 
 func (server *Server) RawScan(_ context.Context, req *kvrpcpb.RawScanRequest) (*kvrpcpb.RawScanResponse, error) {
 	// Your Code Here (1).
-	reader, err := server.storage.Reader(nil)
+	reader, err := server.storage.Reader(req.Context)
 	defer reader.Close()
 	if err != nil {
 		return &kvrpcpb.RawScanResponse{

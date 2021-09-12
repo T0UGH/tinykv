@@ -32,6 +32,7 @@ func NotifyReqRegionRemoved(regionId uint64, cb *message.Callback) {
 // If we create the peer actively, like bootstrap/split/merge region, we should
 // use this function to create the peer. The region must contain the peer info
 // for this store.
+// 如果我们主动创建对等体，比如bootstrap/split/merge区域，我们应该使用这个函数来创建对等体。region必须包含此存储的对等信息。
 func createPeer(storeID uint64, cfg *config.Config, sched chan<- worker.Task,
 	engines *engine_util.Engines, region *metapb.Region) (*peer, error) {
 	metaPeer := util.FindPeer(region, storeID)
@@ -45,6 +46,7 @@ func createPeer(storeID uint64, cfg *config.Config, sched chan<- worker.Task,
 // The peer can be created from another node with raft membership changes, and we only
 // know the region_id and peer_id when creating this replicated peer, the region info
 // will be retrieved later after applying snapshot.
+// 可以从另一个改变raft成员关系的node上创建peer，在创建这个fu制的peer时，我们只知道region_id和peer_id，稍后在应用快照后检索区域信息。
 func replicatePeer(storeID uint64, cfg *config.Config, sched chan<- worker.Task,
 	engines *engine_util.Engines, regionID uint64, metaPeer *metapb.Peer) (*peer, error) {
 	// We will remove tombstone key when apply snapshot
@@ -365,6 +367,7 @@ func (p *peer) Term() uint64 {
 	return p.RaftGroup.Raft.Term
 }
 
+// 定期发送RegionHeartBeat来更新client端的Region信息
 func (p *peer) HeartbeatScheduler(ch chan<- worker.Task) {
 	clonedRegion := new(metapb.Region)
 	err := util.CloneMsg(p.Region(), clonedRegion)

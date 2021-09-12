@@ -133,25 +133,54 @@ As the Raft module supported membership change and leadership change now, in thi
 - ChangePeer
 - Split
 
+> Raft模块现在支持成员变更和领导变更，在这一部分中，您需要让TinyKV基于part a支持一些管理命令(admin comands)。正如您在`proto/proto/raft_cmdpb.proto`中看到的，有四种类型的管理命令:
+>
+> - `CompactLog` (已经在project2 part C中实现了)
+> - `TransferLeader`
+> - `ChangePeer`
+> - `Split`
+
 `TransferLeader` and `ChangePeer` are the commands based on the Raft support of leadership change and membership change. These will be used as the basic operator steps for the balance scheduler. `Split` splits one Region into two Regions, that’s the base for multi raft. You will implement them step by step.
+
+>`TransferLeader`和`ChangePeer`是Raft支持的基于领导变更和成员变更的命令。这些命令将用于支持平衡调度器。`split`将一个`Region`分割成两个`Region`，这是multi-raft的基础。你将一步一步地实现它们。
 
 ### The Code
 
 All the changes are based on the implementation of the project2, so the code you need to modify is all about `kv/raftstore/peer_msg_handler.go` and `kv/raftstore/peer.go`.
 
+> 所有变更都基于project2的实现，所以你需要修改的所有代码都在`kv/raftstore/peer_msg_handler.go`和`kv/raftstore/peer.go`中。
+
 ### Propose transfer leader
 
 This step is quite simple. As a raft command, `TransferLeader` will be proposed as a Raft entry. But `TransferLeader` actually is an action with no need to replicate to other peers, so you just need to call the `TransferLeader()` method of `RawNode` instead of `Propose()` for `TransferLeader` command.
 
+>#### 提议变更领导
+>
+>这一步相当简单。作为一个raft命令，`TransferLeader`将被作为一条Raft entry。但是`TransferLeader`实际上是一个不需要复制到其他对等体的动作，所以您只需要调用`RawNode`的`TransferLeader()`方法，而不是`Propose()`。
+
 ### Implement conf change in raftstore
 
 The conf change has two different types, `AddNode` and `RemoveNode`. Just as its name implies, it adds a Peer or removes a Peer from the Region. To implement conf change, you should learn the terminology of `RegionEpoch` first. `RegionEpoch` is a part of the meta-information of `metapb.Region`. When a Region adds or removes Peer or splits, the Region’s epoch has changed. RegionEpoch’s `conf_ver` increases during ConfChange while `version` increases during a split. It will be used to guarantee the latest region information under network isolation that two leaders in one Region.
+
+> #### 在raftstore中实现配置更改
+>
+> 配置更改有两种不同的类型，`AddNode`和`RemoveNode`。顾名思义，它会在Region中添加或删除一个Peer。要实现conf变更，您应该首先学习术语——`RegionEpoch`。`RegionEpoch`是`metapb.Region`元信息的一部分。当一个Region添加或删除Peer或分裂时，该Region的Epoch已经改变。RegionEpoch的`conf_ver`在`ConfChange`期间增加，而`version`在`split`的时候增加。它将用于保证一个region的两位leader在网络隔离下获得最新的region信息。
 
 You need to make raftstore support handling conf change commands. The process would be:
 
 1. Propose conf change admin command by `ProposeConfChange`
 2. After the log is committed, change the `RegionLocalState`, including `RegionEpoch` and `Peers` in `Region`
 3. Call `ApplyConfChange()` of `raft.RawNode`
+
+
+
+>你需要确保raftstore支持处理conf change命令。过程如下
+>
+>1. 通过调用`ProposeConfChange`提交conf change admin命令
+>2. 日志提交完成后，需要修改`RegionLocalState`，包括`RegionEpoch`和`Region`中的`Peers`
+>3. 调用`raft.RawNode`上的`ApplyConfChange()`命令
+
+
 
 > Hints:
 >
@@ -160,11 +189,60 @@ You need to make raftstore support handling conf change commands. The process wo
 > - Do not forget to update the region state in `storeMeta` of `GlobalContext`
 > - Test code schedules the command of one conf change multiple times until the conf change is applied, so you need to consider how to ignore the duplicate commands of the same conf change.
 
+
+
+>提示：
+>
+>- 要执行`AddNode`，新添加的Peer将由Leader的`HeartBeatMsg`创建(Leader向某个还没有该Region的Store发了一个HeartBeat，然后那边发现还没有就会创建一个)，请查看`storeWorker`的`maybeCreatePeer()`。此时，该Peer未初始化，其区域的任何信息我们都不知道，因此我们使用`0`初始化其`Log Term`和`Index`。然后，Leader将知道该`Follower`没有数据（存在0到5之间的日志间隔），并将直接向该Follower发送快照。
+>- 为了执行`RemoveNode`，您应该显式调用`destroyPeer()`以停止Raft模块。销毁逻辑已经为您提供。
+>- 不要忘记更新`GlobalContext`的`storeMeta`中的Region状态
+>- 测试代码对一个CONF更改的命令进行多次调度，直到应用CONF更改，所以您需要考虑如何忽略同一CONF更改的重复命令。
+>
+>
+
+
+
+> 如何更新RegionLocalState可以看这里kv/raftstore/bootstrap.go:93
+>
+> 当changeType==AddNode时，就往ctx和RegionLocalState里面都更新
+>
+> 当changeType==RemoveNode时，首先要更新，然后还需要判断被Remove的是不是自己，如果是自己就把自己给Remove掉
+
+
+
+>/// `is_initial_msg`检查`msg`是否可以用来初始化一个新的对等体。
+>
+>//可能有两种情况:
+>
+>/ / 1。目标同行已经存在，但尚未与领导建立沟通
+>
+>/ / 2。由于成员变更或区域分裂，目标peer被新添加，但不是
+>
+>/ /创建
+>
+>//在这两种情况下，区域的开始键和结束键都附加在RequestVote和
+>
+>//该对等体的存储的心跳消息，以检查是否创建一个新的对等体
+>
+>//当接收到这些消息时，或者只是等待一个挂起的区域分割执行
+>
+>/ /。
+
+
+
 ### Implement split region in raftstore
 
 ![raft_group](imgs/keyspace.png)
 
 To support multi-raft, the system performs data sharding and makes each Raft group store just a portion of data. Hash and Range are commonly used for data sharding. TinyKV uses Range and the main reason is that Range can better aggregate keys with the same prefix, which is convenient for operations like scan. Besides, Range outperforms in split than Hash. Usually, it only involves metadata modification and there is no need to move data around.
+
+
+
+> ### 在raftstore中实现split Region
+>
+> 为了支持multi-raft，系统进行了数据分片，并使每个Raft Group仅存储一部分数据。Hash和Range通常用于数据分片。TinyKV使用Range，主要原因是Range可以更好地聚合具有相同前缀的key，这便于scan等操作。此外，Range在split中的性能优于hash。**通常，它只涉及元数据修改，不需要移动数据**(为什么通常只需要修改元数据不需要移动数据)。
+
+
 
 ``` protobuf
 message Region {
@@ -177,13 +255,33 @@ message Region {
 }
 ```
 
+
+
 Let’s take a relook at Region definition, it includes two fields `start_key` and `end_key` to indicate the range of data which the Region is responsible for. So split is the key step to support multi-raft. In the beginning, there is only one Region with range [“”, “”). You can regard the key space as a loop, so [“”, “”) stands for the whole space. With the data written, the split checker will checks the region size every `cfg.SplitRegionCheckTickInterval`, and generates a split key if possible to cut the Region into two parts, you can check the logic in
 `kv/raftstore/runner/split_check.go`. The split key will be wrapped as a `MsgSplitRegion` handled by `onPrepareSplitRegion()`.
+
+
+
+> 让我们重新查看Region定义，它包括两个字段`start_key`和`end_key`，以指示区域负责的数据范围。因此，分裂是支持multi-raft的关键步骤。在开始时，只有一个区域的范围为`['','')`。您可以将键空间视为一个循环，因此`['','')`代表整个空间。写入数据后，分裂检查器将在每个`SplitRegionCheckTickInterval`检中检查Region大小。并生成一个split key（如果可能），以将Region分割为两部分。你可以在`kv/raftstore/runner/split_check.go`中查看分裂逻辑。分裂key将被包装为由`PreparonSplitRegion()`处理的`MsgSplitRegion`。
+
+
 
 To make sure the ids of the newly created Region and Peers are unique, the ids are allocated by the scheduler. It’s also provided, so you don’t have to implement it.
 `onPrepareSplitRegion()` actually schedules a task for the pd worker to ask the scheduler for the ids. And make a split admin command after receiving the response from scheduler, see `onAskSplit()` in `kv/raftstore/runner/scheduler_task.go`.
 
+
+
+> 为了确保新创建的Region和Peer的ID是唯一的，由调度程序分配ID。ID由调度程序分配。它也是提供的，所以您不必实现它。`onPrepareSplitRegion()`实际上为pd worker安排了一个任务，以向调度器请求ID。并在收到调度程序的响应后发出`split admin`命令，查看`kv/raftstore/runner/scheduler_task.go`中的`onAskSplit()`
+
+
+
 So your task is to implement the process of handling split admin command, just like conf change does. The provided framework supports multiple raft, see `kv/raftstore/router.go`. When a Region splits into two Regions, one of the Regions will inherit the metadata before splitting and just modify its Range and RegionEpoch while the other will create relevant meta information.
+
+
+
+> 因此，您的任务是实现处理split admin命令的过程，就像处理conf change一样。提供的框架支持multiple Raft，参见`kv/raftstore/router.go`。当一个`Region`拆分为两个`Region`时，其中一个`Region`将在拆分前继承元数据，只需修改其`Range`和`RegionEpoch`，而另一个Region将创建相关的元数据信息。
+
+
 
 > Hints:
 >
@@ -192,6 +290,16 @@ So your task is to implement the process of handling split admin command, just l
 > - For the case region split with network isolation, the snapshot to be applied may have overlap with the existing region’s range. The check logic is in `checkSnapshot()` in `kv/raftstore/peer_msg_handler.go`. Please keep it in mind when implementing and take care of that case.
 > - Use `engine_util.ExceedEndKey()` to compare with region’s end key. Because when the end key equals “”, any key will equal or greater than “”. > - There are more errors need to be considered: `ErrRegionNotFound`,
 `ErrKeyNotInRegion`, `ErrEpochNotMatch`.
+
+
+
+> 提示
+>
+> - 此新创建Region的对应Peer应由`createPeer()`创建并注册到`router.regions`(kv/raftstore/router.go:43)。Region信息应插入`ctx.storeMeta`中的`regionRanges`中。
+> - 对于发生网络隔离的分裂Region，要应用的快照可能与现有区域的范围重叠。检查逻辑位于`kv/raftstore/peer_msg_handler.go`的`checkSnapshot()`中。请在实施和处理该案例时牢记这一点。
+> - 使用`engine_util.ExceedEndKey()`与`region`的结束键进行比较。因为当结束键等于“”时，任何键都将等于或大于“”需要考虑的错误还有：`ErrRegionNotFound`、`ErrKeyNotInRegion`、`ErrEpochNotMatch`。
+> - Q: 为什么split只涉及元数据修改，不需要移动数据
+> - A: 因为在存储层面上，同一个store的所有region的data都是存在一起的，只是这些数据的管理权隶属于不同的region，所以看起来就不需要挪动数据
 
 ## Part C
 

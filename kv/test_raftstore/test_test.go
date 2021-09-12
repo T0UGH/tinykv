@@ -40,7 +40,7 @@ func SpawnClientsAndWait(t *testing.T, ch chan bool, ncli int, fn func(me int, t
 	// log.Printf("SpawnClientsAndWait: waiting for clients")
 	for cli := 0; cli < ncli; cli++ {
 		ok := <-ca[cli]
-		// log.Infof("SpawnClientsAndWait: client %d is done\n", cli)
+		//log.Infof("SpawnClientsAndWait: client %d is done\n", cli)
 		if ok == false {
 			t.Fatalf("failure")
 		}
@@ -129,10 +129,12 @@ func partitioner(t *testing.T, cluster *Cluster, ch chan bool, done *int32, unre
 	}
 }
 
+// random membership change
 func confchanger(t *testing.T, cluster *Cluster, ch chan bool, done *int32) {
 	defer func() { ch <- true }()
 	count := uint64(cluster.count)
 	for atomic.LoadInt32(done) == 0 {
+		// random add remove peers
 		region := cluster.GetRandomRegion()
 		store := rand.Uint64()%count + 1
 		if p := FindPeer(region, store); p != nil {
@@ -142,7 +144,8 @@ func confchanger(t *testing.T, cluster *Cluster, ch chan bool, done *int32) {
 		} else {
 			cluster.MustAddPeer(region.GetId(), cluster.AllocPeer(store))
 		}
-		time.Sleep(time.Duration(rand.Int63()%200) * time.Millisecond)
+		//time.Sleep(time.Duration(rand.Int63()%200) * time.Millisecond)
+		time.Sleep(time.Second)
 	}
 }
 
@@ -360,7 +363,6 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 			}
 		}
 	}
-	log.Infof("done")
 }
 
 func TestBasic2B(t *testing.T) {
@@ -722,7 +724,7 @@ func TestSplitRecover3B(t *testing.T) {
 
 func TestSplitRecoverManyClients3B(t *testing.T) {
 	// Test: restarts, snapshots, conf change, many clients (3B) ...
-	GenericTest(t, "3B", 20, false, true, false, -1, false, true)
+	GenericTest(t, "3B", 5, false, true, false, -1, false, true)
 }
 
 func TestSplitUnreliable3B(t *testing.T) {

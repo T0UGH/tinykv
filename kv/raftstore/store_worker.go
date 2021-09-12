@@ -1,6 +1,7 @@
 package raftstore
 
 import (
+	"github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 	"sync"
 
 	"github.com/Connor1996/badger"
@@ -192,16 +193,26 @@ func (d *storeWorker) onRaftMessage(msg *rspb.RaftMessage) error {
 ///
 /// return false to indicate that target peer is in invalid state or
 /// doesn't exist and can't be created.
+// 如果目标peer不存在,就创建它
+// 如果目标peer是非法状态或者不存在并且不能被创建，就返回false
 func (d *storeWorker) maybeCreatePeer(regionID uint64, msg *rspb.RaftMessage) (bool, error) {
 	// we may encounter a message with larger peer id, which means
 	// current peer is stale, then we should remove current peer
 	meta := d.ctx.storeMeta
 	meta.Lock()
 	defer meta.Unlock()
+	// if exist don't do anything
 	if _, ok := meta.regions[regionID]; ok {
 		return true, nil
 	}
-	if !util.IsInitialMsg(msg.Message) {
+
+	//if !util.IsInitialMsg(msg.Message) {
+	//	log.Debugf("target peer %s doesn't exist", msg.ToPeer)
+	//	return false, nil
+	//}
+
+	if !(msg.Message.MsgType == eraftpb.MessageType_MsgRequestVote ||
+		msg.Message.MsgType == eraftpb.MessageType_MsgHeartbeat) {
 		log.Debugf("target peer %s doesn't exist", msg.ToPeer)
 		return false, nil
 	}

@@ -40,6 +40,7 @@ func (r *RegionReader) Close() {
 
 // RegionIterator wraps a db iterator and only allow it to iterate in the region. It behaves as if underlying
 // db only contains one region.
+// regionIterator将一个db iterator包装起来，并且只允许它迭代在这个region的元素。它表现得像是db中只包括这一个region一样
 type RegionIterator struct {
 	iter   *engine_util.BadgerIterator
 	region *metapb.Region

@@ -31,8 +31,9 @@ func NewLeaderRole(raft *Raft) *LeaderRole {
 	handlerMap[pb.MessageType_MsgPropose] = NewLeaderMsgProposeHandler(raft)
 	handlerMap[pb.MessageType_MsgAppend] = NewMsgAppendHandler(raft)
 	handlerMap[pb.MessageType_MsgAppendResponse] = NewMsgAppendResponseHandler(raft)
-	handlerMap[pb.MessageType_MsgSnapshot] = NewNoopHandler()
+	handlerMap[pb.MessageType_MsgSnapshot] = NewMsgSnapshotHandler(raft)
 	handlerMap[pb.MessageType_MsgTransferLeader] = NewMsgTransferLeaderHandler(raft)
+	handlerMap[pb.MessageType_MsgTimeoutNow] = NewNoopHandler()
 	return &LeaderRole{
 		raft:       raft,
 		handlerMap: handlerMap,
@@ -68,7 +69,7 @@ func NewCandidateRole(raft *Raft) *CandidateRole {
 	handlerMap[pb.MessageType_MsgPropose] = NewNoopHandler()
 	handlerMap[pb.MessageType_MsgAppend] = NewMsgAppendHandler(raft)
 	handlerMap[pb.MessageType_MsgAppendResponse] = NewNoopHandler()
-	handlerMap[pb.MessageType_MsgSnapshot] = NewNoopHandler()
+	handlerMap[pb.MessageType_MsgSnapshot] = NewMsgSnapshotHandler(raft)
 	handlerMap[pb.MessageType_MsgTransferLeader] = NewNotLeaderMsgTransferLeaderHandler(raft)
 	handlerMap[pb.MessageType_MsgTimeoutNow] = NewMsgHupAndMsgTimeoutNowHandler(raft)
 	return &CandidateRole{
