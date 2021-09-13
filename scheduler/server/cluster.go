@@ -45,8 +45,7 @@ var (
 // cluster 1 -> /1/raft, value is metapb.Cluster
 // cluster 2 -> /2/raft
 // For cluster 1
-// store 1 -> /1/raft/s/1, value is metapb.Store
-// region 1 -> /1/raft/r/1, value is metapb.Region
+// store 1 -> /1/raft/s/1, value is metapb.Store // region 1 -> /1/raft/r/1, value is metapb.Region
 type RaftCluster struct {
 	sync.RWMutex
 	ctx context.Context
@@ -279,7 +278,36 @@ func (c *RaftCluster) handleStoreHeartbeat(stats *schedulerpb.StoreStats) error 
 // processRegionHeartbeat updates the region information.
 func (c *RaftCluster) processRegionHeartbeat(region *core.RegionInfo) error {
 	// Your Code Here (3C).
-
+	// 用c.GetRegionByID()来获取region
+	epoch := region.GetRegionEpoch()
+	if epoch == nil {
+		return ErrRegionNotFound(region.GetID())
+	}
+	localRegion, _ := c.GetRegionByID(region.GetID())
+	if localRegion != nil {
+		if localRegion.RegionEpoch.Version > region.GetMeta().RegionEpoch.Version ||
+			localRegion.RegionEpoch.ConfVer > region.GetMeta().RegionEpoch.ConfVer {
+			return ErrRegionIsStale(region.GetMeta(), localRegion)
+		}
+	} else {
+		// 用c.core.Regions.GetOverlaps()获取重叠的regions来检查overlap的region
+		overlapRegions := c.core.Regions.GetOverlaps(region)
+		for _, overlap := range overlapRegions {
+			if overlap.GetMeta().RegionEpoch.Version > region.GetMeta().RegionEpoch.Version ||
+				overlap.GetMeta().RegionEpoch.ConfVer > region.GetMeta().RegionEpoch.ConfVer {
+				return ErrRegionIsStale(region.GetMeta(), overlap.GetMeta())
+			}
+		}
+	}
+	// 小于等于都更新，这样虽然会重复，但是比较简便
+	// 用c.core.PutRegion()来更新Region
+	if err := c.putRegion(region); err != nil {
+		return err
+	}
+	// 用c.updateStoreStatusLocked()来更新相关存储的状态
+	for i := range region.GetStoreIds() {
+		c.updateStoreStatusLocked(i)
+	}
 	return nil
 }
 

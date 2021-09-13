@@ -303,35 +303,64 @@ So your task is to implement the process of handling split admin command, just l
 
 ## Part C
 
+> 注意: pending peers是leader不认为它们是working followers的peers
+
 As we have instructed above, all data in our kv store is split into several regions, and every region contains multiple replicas. A problem emerged: where should we place every replica? and how can we find the best place for a replica? Who sends former AddPeer and RemovePeer commands? The Scheduler takes on this responsibility.
+
+> 如上所述，我们的kv存储中的所有数据都分为几个Region，每个region都包含多个副本。这出现了一个问题：我们应该将每个副本放在哪里？我们如何才能找到副本的最佳位置？谁发送之前提到的`AddPeer`和`RemovePeer`命令？调度器(scheduler)承担这个责任。
 
 To make informed decisions, the Scheduler should have some information about the whole cluster. It should know where every region is. It should know how many keys they have. It should know how big they are…  To get related information, the Scheduler requires that every region should send a heartbeat request to the Scheduler periodically. You can find the heartbeat request structure `RegionHeartbeatRequest` in `/proto/proto/pdpb.proto`. After receiving a heartbeat, the scheduler will update local region information.
 
+> 为了做出明智的决策，调度器应该有一些关于整个集群的信息。它应该知道每个region在哪里。它应该知道他们存了多少key。它应该知道它们有多大……为了获得相关信息，调度程序**要求每个region都定期向调度程序发送心跳请求**。您可以在`/proto/proto/pdpb.proto`中找到心跳请求结构`RegionHeartbeatRequest`。在接收到心跳信号后，调度程序将更新本地存储的region信息。
+
 Meanwhile, the Scheduler checks region information periodically to find whether there is an imbalance in our TinyKV cluster. For example, if any store contains too many regions, regions should be moved to other stores from it. These commands will be picked up as the response for corresponding regions’ heartbeat requests.
 
+> 同时，调度器定期检查region信息，以发现TinyKV集群中是否存在不平衡。例如，如果任何store包含太多region，则应将区域从该store移动到其他store。这些命令将被放到相应region的heartbeat响应中。
+
 In this part, you will need to implement the above two functions for Scheduler. Follow our guide and framework, and it won’t be too difficult.
+
+>在本部分中，您将需要为调度器实现上述两个功能。遵循我们的指南和框架，这不会太困难。
 
 ### The Code
 
 The code you need to modify is all about `scheduler/server/cluster.go` and `scheduler/server/schedulers/balance_region.go`. As described above, when the Scheduler received a region heartbeat, it will update its local region information first. Then it will check whether there are pending commands for this region. If there is, it will be sent back as the response.
 
+> 你需要修改的代码全部都在`scheduler/server/cluster.go`和`scheduler/server/schedulers/balance_region.go`。如上所述，当调度器接收到区域心跳信号时，它将首先更新其本地区域信息。然后，它将检查此区域是否有挂起的命令。如果有，它将作为响应发回。
+
 You only need to implement `processRegionHeartbeat` function, in which the Scheduler updates local information; and `Schedule` function for the balance-region scheduler, in which the Scheduler scans stores and determines whether there is an imbalance and which region it should move.
+
+>你只需实现`processRegionHeartbeat`函数，在这个函数中调度器更新本地信息；
+>
+>你还需要实现`Schedule`函数作为平衡region调度器。其中调度器扫描存储并确定是否存在不平衡以及应移动哪个region。
 
 ### Collect region heartbeat
 
 As you can see, the only argument of `processRegionHeartbeat` function is a regionInfo. It contains information about the sender region of this heartbeat. What the Scheduler needs to do is just to update local region records. But should it update these records for every heartbeat?
 
+> 如您所见，`processRegionHeartbeat`函数的唯一参数是`regionInfo`。它包含有关此heartbeat的发送方region的信息。调度器需要做的只是更新本地region记录。但它应该为每一次心跳更新这些记录吗？
+
 Definitely not! There are two reasons. One is that updates could be skipped when no changes have been made for this region. The more important one is that the Scheduler cannot trust every heartbeat. Particularly speaking, if the cluster has partitions in a certain section, the information about some nodes might be wrong.
+
+> 绝对不是！有两个原因。一个是，当没有对该region进行任何更改时，可以跳过更新。更重要的是，调度器不能信任每个心跳。特别是，如果集群在某个部分中有分区，那么关于某些节点的信息可能是错误的。
 
 For example, some Regions re-initiate elections and splits after they are split, but another isolated batch of nodes still sends the obsolete information to Scheduler through heartbeats. So for one Region, either of the two nodes might say that it's the leader, which means the Scheduler cannot trust them both.
 
+> 例如，某些region在split后重新启动选举和split，但另一批孤立的节点仍然通过心跳将过时的信息发送给调度程序。因此，对于一个region，两个节点中的任何一个都可能说它是领导者，这意味着调度器不能同时信任这两个节点。
+
 Which one is more credible? The Scheduler should use `conf_ver` and `version` to determine it, namely `RegionEpcoh`. The Scheduler should first compare the values of the Region version of two nodes. If the values are the same, the Scheduler compares the values of the configuration change version. The node with a larger configuration change version must have newer information.
+
+> 哪一个更可信？调度程序应该使用`conf_ver`和`version`来确定它，即`RegionEpoch`。调度程序应首先比较两个节点的region的version。如果version相同，调度程序将比较`conf_ver`的值。`conf_ver`较大的节点必然具有更新的信息。
 
 Simply speaking, you could organize the check routine in the below way:
 
 1. Check whether there is a region with the same Id in local storage. If there is and at least one of the heartbeats’ `conf_ver` and `version` is less than its, this heartbeat region is stale
 
 2. If there isn’t, scan all regions that overlap with it. The heartbeats’ `conf_ver` and `version` should be greater or equal than all of them, or the region is stale.
+
+> 简单地说，您可以按以下方式组织检查程序：
+>
+> 1. 检查本地存储中是否存在具有相同Id的region。如果存在并且heartbeat中的`conf_ver`和`version`这两个中至少有一个小于本地存储中的region，则此heartbeat中的region已过时
+> 2. 如果没有，请扫描与其重叠的所有region。heartbeat的`conf_ver`和`version`应大于或等于所有这些region，否则heartbeat中的region过时。
 
 Then how the Scheduler determines whether it could skip this update? We can list some simple conditions:
 
@@ -345,19 +374,38 @@ Then how the Scheduler determines whether it could skip this update? We can list
 
 * …
 
+> 那么如何决定Scheduler是否跳过这个更新呢？我们可以列出一些简单的情况
+>
+> - 如果新的`version`或`conf_ver`比原来的大，它不能被跳过
+> - 如果leader变更了，它不能被跳过
+> - 如果新的这个或者原来的有挂起的peer，不能被跳过
+> - 如果`ApproximateSize`发生了变化，不能被跳过
+
 Don’t worry. You don’t need to find a strict sufficient and necessary condition. Redundant updates won’t affect correctness.
 
+> 别担心。你不需要找到一个严格的充分必要条件。冗余更新不会影响正确性。
+
 If the Scheduler determines to update local storage according to this heartbeat, there are two things it should update: region tree and store status. You could use `RaftCluster.core.PutRegion` to update the region tree and use `RaftCluster.core.UpdateStoreStatus` to update related store’s status (such as leader count, region count, pending peer count… ).
+
+> 如果调度程序决定根据此心跳更新本地存储，那么它应该更新两处：region tree和store status。你可以使用`RaftCluster.core.PutRegion`来更新region tree并使用`RaftCluster.core.UpdateStoreStatus`以更新相关存储的状态（例如领导计数、区域计数、挂起的peer计数…）
 
 ### Implement region balance scheduler
 
 There can be many different types of schedulers running in the Scheduler, for example, balance-region scheduler and balance-leader scheduler. This learning material will focus on the balance-region scheduler.
 
+> Scheduler中可以运行许多不同类型的schedulers，例如，balance-region scheduler和balance-leader scheduler。本学习材料将重点介绍balance-region scheduler。
+
 Every scheduler should have implemented the Scheduler interface, which you can find in `/scheduler/server/schedule/scheduler.go`. The Scheduler will use the return value of `GetMinInterval` as the default interval to run the `Schedule` method periodically. If it returns null (with several times retry), the Scheduler will use `GetNextInterval` to increase the interval. By defining `GetNextInterval` you can define how the interval increases. If it returns an operator, the Scheduler will dispatch these operators as the response of the next heartbeat of the related region.
+
+> 每个Scheduler都应该实现Scheduler interface，您可以在`/scheduler/server/schedule/scheduler.go`中找到该接口。Scheduler将使用`GetMinInterval`的返回值作为定期运行`Schedule`方法的默认间隔。如果它返回`null`（多次重试），调度程序将使用`GetNextInerval`来增加间隔。通过定义`GetNextInterval`，可以定义间隔的增加方式。如果它返回一个`operator`，`Scheduler`将分发这些操作符作为相关`region`的下一个心跳信号的响应。
 
 The core part of the Scheduler interface is `Schedule` method. The return value of this method is `Operator`, which contains multiple steps such as `AddPeer` and `RemovePeer`. For example, `MovePeer` may contain `AddPeer`,  `transferLeader` and `RemovePeer` which you have implemented in former part. Take the first RaftGroup in the diagram below as an example. The scheduler tries to move peers from the third store to the fourth. First, it should `AddPeer` for the fourth store. Then it checks whether the third is a leader, and find that no, it isn’t, so there is no need to `transferLeader`. Then it removes the peer in the third store.
 
+> Schduler接口的核心部分是`Schedule`方法。此方法的返回值为`Operator`，其中包含如`AddPeer`和`RemovePeer`等多个步骤。例如，`MovePeer`可能包含在前一部分中实现的`AddPeer`、`transferLeader`和`RemovePeer`。以下图中的第一个RaftGroup为例。调度程序尝试将peers从第三个store移动到第四个store。首先，它应该为第四个store添加Peer。然后检查第三个是否是领导者，发现不是，所以没有必要转移领导者。然后它删除第三个store中的peer。
+
 You can use the `CreateMovePeerOperator` function in `scheduler/server/schedule/operator` package to create a `MovePeer` operator.
+
+> 你可以使用`scheduler/server/schdule/operator`包中的`CreateMovePeerOperator`函数来创建一个`MovePeer`操作符。
 
 ![balance](imgs/balance1.png)
 
@@ -365,9 +413,20 @@ You can use the `CreateMovePeerOperator` function in `scheduler/server/schedule/
 
 In this part, the only function you need to implement is the `Schedule` method in `scheduler/server/schedulers/balance_region.go`. This scheduler avoids too many regions in one store. First, the Scheduler will select all suitable stores. Then sort them according to their region size. Then the Scheduler tries to find regions to move from the store with the biggest region size.
 
+> 在这一部分，你唯一需要实现的`Schedule`方法在`scheduler/server/schedulers/balance_region.go`上。此Scheduler避免在一个store中出现过多的region。首先，scheduler将选择所有合适的store。然后根据region大小对它们进行排序。然后，scheduler从region size最大的store中寻找region来移动
+
 The scheduler will try to find the region most suitable for moving in the store. First, it will try to select a pending region because pending may mean the disk is overloaded. If there isn’t a pending region, it will try to find a follower region. If it still cannot pick out one region, it will try to pick leader regions. Finally, it will select out the region to move, or the Scheduler will try the next store which has a smaller region size until all stores will have been tried.
 
+> Scheduler将尝试在store中找到最适合移动的region。
+>
+> - 首先，它将尝试选择一个挂起的region，因为挂起可能意味着磁盘过载。
+> - 如果没有挂起region，它将尝试查找follower region。
+> - 如果它仍然无法选择一个region，它将尝试选择leader区域。
+> - 最后，它将选择要移动的区域，或者scheduler将尝试下一个region大小较小的store，直到所有store都已尝试。
+
 After you pick up one region to move, the Scheduler will select a store as the target. Actually, the Scheduler will select the store with the smallest region size. Then the Scheduler will judge whether this movement is valuable, by checking the difference between region sizes of the original store and the target store. If the difference is big enough, the Scheduler should allocate a new peer on the target store and create a move peer operator.
+
+> 选择一个要移动的region后，scheduler将选择一个store作为目标。实际上，scheduler将选择具有最小region size的store。然后，scheduler将通过检查原始存储和目标存储的区域大小之间的差异来判断此移动是否有价值。如果差异足够大，scheduler应该在目标store上分配一个新的peer，并创建一个move peer operator。
 
 As you might have noticed, the routine above is just a rough process. A lot of problems are left:
 
@@ -375,10 +434,24 @@ As you might have noticed, the routine above is just a rough process. A lot of p
 
 In short, a suitable store should be up and the down time cannot be longer than `MaxStoreDownTime` of the cluster, which you can get through `cluster.GetMaxStoreDownTime()`.
 
+> 正如您可能已经注意到的，上面的例行程序只是一个粗略的过程。留下了很多问题：
+>
+> q: 哪个store适合移动？
+>
+> a:简言之，一个合适的store应该是启动(up)的，而停机时间不能超过集群的`MaxStoreDownTime`，您可以通过`cluster.GetMaxStoreDownTime()`来获得它。
+
 * How to select regions?
 
 The Scheduler framework provides three methods to get regions. `GetPendingRegionsWithLock`, `GetFollowersWithLock` and `GetLeadersWithLock`. The Scheduler can get related regions from them. And then you can select a random region.
 
+> q: 如何选择region
+>
+> a: 调度器框架提供了三种获取region的方法。`GetPendingRegionsWithLock`、`GetFollowersWithLock`、`GetLeadersWithLock`。调度器可以从中获取相关region。然后你可以选择一个随机region。
+
 * How to judge whether this operation is valuable?
 
 If the difference between the original and target stores’ region sizes is too small, after we move the region from the original store to the target store, the Scheduler may want to move back again next time. So we have to make sure that the difference has to be bigger than two times the approximate size of the region, which ensures that after moving, the target store’s region size is still smaller than the original store.
+
+> q:如何判断这个操作是否有价值？
+>
+> a:如果原始存储和目标存储的region大小之间的差异太小，则在我们将区域从原始存储移动到目标存储后，计划程序可能希望下次再次移回。因此，我们必须确保差异必须大于region近似大小的两倍，这确保在移动后，目标store的region大小仍然小于original store。
