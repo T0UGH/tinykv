@@ -10,6 +10,8 @@ import (
 // Write is a representation of a committed write to backing storage.
 // A serialized version is stored in the "write" CF of our engine when a write is committed. That allows MvccTxn to find
 // the status of a key at a given timestamp.
+//写是向后备存储提交的写的表示。
+//当一个写被提交时，一个序列化的版本被存储在引擎的“写”CF中。这允许MvccTxn查找给定时间戳的键的状态。
 type Write struct {
 	StartTS uint64
 	Kind    WriteKind

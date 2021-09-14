@@ -455,3 +455,7 @@ If the difference between the original and target stores’ region sizes is too 
 > q:如何判断这个操作是否有价值？
 >
 > a:如果原始存储和目标存储的region大小之间的差异太小，则在我们将区域从原始存储移动到目标存储后，计划程序可能希望下次再次移回。因此，我们必须确保差异必须大于region近似大小的两倍，这确保在移动后，目标store的region大小仍然小于original store。
+
+
+
+[2021/09/13 01:21:47.892 -07:00] [FATAL] [log.go:294] [panic] [recover={}] [stack="github.com/pingcap/log.Fatal\n\t/home/tg/go/pkg/mod/github.com/pingcap/log@v0.0.0-20200117041106-d28c14d3b1cd/global.go:59\ngithub.com/pingcap-incubator/tinykv/scheduler/pkg/logutil.LogPanic\n\t/home/tg/go/tinykv/scheduler/pkg/logutil/log.go:294\nruntime.gopanic\n\t/usr/local/go/src/runtime/panic.go:969\nruntime.goPanicIndex\n\t/usr/local/go/src/runtime/panic.go:88\ngithub.com/pingcap-incubator/tinykv/scheduler/server/schedulers.(*balanceRegionScheduler).Schedule\n\t/home/tg/go/tinykv/scheduler/server/schedulers/balance_region.go:126\ngithub.com/pingcap-incubator/tinykv/scheduler/server.(*scheduleController).Schedule\n\t/home/tg/go/tinykv/scheduler/server/coordinator.go:350\ngithub.com/pingcap-incubator/tinykv/scheduler/server.(*coordinator).runScheduler\n\t/home/tg/go/tinykv/scheduler/server/coordinator.go:303"]
