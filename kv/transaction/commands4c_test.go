@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// 测试rollback一个没key的req
 // TestEmptyRollback4C tests a rollback with no keys.
 func TestEmptyRollback4C(t *testing.T) {
 	builder := newBuilder(t)
@@ -20,6 +21,7 @@ func TestEmptyRollback4C(t *testing.T) {
 	builder.assertLens(0, 0, 0)
 }
 
+// 测试一个成功的rollback
 // TestRollback4C tests a successful rollback.
 func TestRollback4C(t *testing.T) {
 	builder := newBuilder(t)
@@ -41,6 +43,7 @@ func TestRollback4C(t *testing.T) {
 }
 
 // TestRollbackDuplicateKeys4C tests a rollback which rolls back multiple keys, including one duplicated key.
+// 测试roll back好多个key，其中有一个key重复了
 func TestRollbackDuplicateKeys4C(t *testing.T) {
 	builder := newBuilder(t)
 	cmd := builder.rollbackRequest([]byte{3}, []byte{15}, []byte{3})
@@ -63,6 +66,7 @@ func TestRollbackDuplicateKeys4C(t *testing.T) {
 }
 
 // TestRollbackMissingPrewrite4C tests trying to roll back a missing prewrite.
+// 测试rollback一个丢失的prewrite
 func TestRollbackMissingPrewrite4C(t *testing.T) {
 	builder := newBuilder(t)
 	cmd := builder.rollbackRequest([]byte{3})
@@ -77,6 +81,7 @@ func TestRollbackMissingPrewrite4C(t *testing.T) {
 }
 
 // TestRollbackCommitted4C tests trying to roll back a transaction which is already committed.
+// 测试rollback一个已经提交的transaction
 func TestRollbackCommitted4C(t *testing.T) {
 	builder := newBuilder(t)
 	cmd := builder.rollbackRequest([]byte{3})
@@ -86,7 +91,7 @@ func TestRollbackCommitted4C(t *testing.T) {
 		{cf: engine_util.CfWrite, key: []byte{3}, ts: 110, value: []byte{1, 0, 0, 0, 0, 0, 0, 0, builder.ts()}},
 	})
 	resp := builder.runOneRequest(cmd).(*kvrpcpb.BatchRollbackResponse)
-
+	// todo 满足这个
 	assert.NotNil(t, resp.Error.Abort)
 	assert.Nil(t, resp.RegionError)
 	builder.assertLens(1, 0, 1)
@@ -97,6 +102,7 @@ func TestRollbackCommitted4C(t *testing.T) {
 }
 
 // TestRollbackDuplicate4C tests trying to roll back a transaction which has already been rolled back.
+// 尝试rollback一个已经被rollback的transaction
 func TestRollbackDuplicate4C(t *testing.T) {
 	builder := newBuilder(t)
 	cmd := builder.rollbackRequest([]byte{3})
@@ -115,6 +121,7 @@ func TestRollbackDuplicate4C(t *testing.T) {
 }
 
 // TestRollbackOtherTxn4C tests trying to roll back the wrong transaction.
+// 尝试rollback一个错误的事务
 func TestRollbackOtherTxn4C(t *testing.T) {
 	builder := newBuilder(t)
 	cmd := builder.rollbackRequest([]byte{3})
@@ -136,6 +143,7 @@ func TestRollbackOtherTxn4C(t *testing.T) {
 }
 
 // TestCheckTxnStatusTtlExpired4C checks that if there is a lock and its ttl has expired, then it is rolled back.
+// 测试锁是否存在并且锁超时了，超时了需要回滚
 func TestCheckTxnStatusTtlExpired4C(t *testing.T) {
 	builder := newBuilder(t)
 	cmd := builder.checkTxnStatusRequest([]byte{3})
@@ -146,14 +154,17 @@ func TestCheckTxnStatusTtlExpired4C(t *testing.T) {
 	resp := builder.runOneRequest(cmd).(*kvrpcpb.CheckTxnStatusResponse)
 
 	assert.Nil(t, resp.RegionError)
+	// 超时Action
 	assert.Equal(t, kvrpcpb.Action_TTLExpireRollback, resp.Action)
 	builder.assertLens(0, 0, 1)
+	// 锁被释放了
 	builder.assert([]kv{
 		{cf: engine_util.CfWrite, key: []byte{3}, ts: cmd.LockTs, value: []byte{3, 0, 0, 5, 0, 0, 0, 0, builder.ts()}},
 	})
 }
 
 // TestCheckTxnStatusTtlNotExpired4C checks that if there is a lock and its ttl has not expired, then nothing changes.
+// 测试锁是否存在并且没有超时，啥事都没发生
 func TestCheckTxnStatusTtlNotExpired4C(t *testing.T) {
 	builder := newBuilder(t)
 	cmd := builder.checkTxnStatusRequest([]byte{3})
@@ -173,6 +184,7 @@ func TestCheckTxnStatusTtlNotExpired4C(t *testing.T) {
 }
 
 // TestCheckTxnStatusRolledBack4C tests checking a key which has already been rolled back..
+// 测试一个锁已经被回滚了
 func TestCheckTxnStatusRolledBack4C(t *testing.T) {
 	builder := newBuilder(t)
 	cmd := builder.checkTxnStatusRequest([]byte{3})
@@ -184,9 +196,12 @@ func TestCheckTxnStatusRolledBack4C(t *testing.T) {
 	resp := builder.runOneRequest(cmd).(*kvrpcpb.CheckTxnStatusResponse)
 
 	assert.Nil(t, resp.RegionError)
+	// NoAction
 	assert.Equal(t, kvrpcpb.Action_NoAction, resp.Action)
+	// NoCommitVersion
 	assert.Equal(t, uint64(0), resp.CommitVersion)
 	builder.assertLens(1, 1, 1)
+	// 保持不变
 	builder.assert([]kv{
 		{cf: engine_util.CfDefault, key: []byte{3}, ts: cmd.LockTs},
 		{cf: engine_util.CfWrite, key: []byte{3}, ts: cmd.LockTs},
@@ -195,6 +210,7 @@ func TestCheckTxnStatusRolledBack4C(t *testing.T) {
 }
 
 // TestCheckTxnStatusCommitted4C tests checking a key which has already been committed.
+// 测试一个key已经被提交了
 func TestCheckTxnStatusCommitted4C(t *testing.T) {
 	builder := newBuilder(t)
 	cmd := builder.checkTxnStatusRequest([]byte{3})
@@ -205,9 +221,12 @@ func TestCheckTxnStatusCommitted4C(t *testing.T) {
 	resp := builder.runOneRequest(cmd).(*kvrpcpb.CheckTxnStatusResponse)
 
 	assert.Nil(t, resp.RegionError)
+	// NoAction
 	assert.Equal(t, kvrpcpb.Action_NoAction, resp.Action)
+	// CommitVersion对的上才行，应该寻找start_ts对应的那个commit_ts
 	assert.Equal(t, binary.BigEndian.Uint64([]byte{0, 0, 5, 0, 0, 0, 0, builder.ts()}), resp.CommitVersion)
 	builder.assertLens(1, 0, 1)
+	// 保持不变
 	builder.assert([]kv{
 		{cf: engine_util.CfDefault, key: []byte{3}, ts: cmd.LockTs},
 		{cf: engine_util.CfWrite, key: []byte{3}, ts: cmd.LockTs},
@@ -215,12 +234,14 @@ func TestCheckTxnStatusCommitted4C(t *testing.T) {
 }
 
 // TestCheckTxnStatusNoLockNoWrite4C checks if there is no data for the key, then we get the right response.
+// 测试这个key根本就不对应数据
 func TestCheckTxnStatusNoLockNoWrite4C(t *testing.T) {
 	builder := newBuilder(t)
 	cmd := builder.checkTxnStatusRequest([]byte{3})
 	resp := builder.runOneRequest(cmd).(*kvrpcpb.CheckTxnStatusResponse)
 
 	assert.Nil(t, resp.RegionError)
+	// 什么数据都没有
 	assert.Equal(t, kvrpcpb.Action_LockNotExistRollback, resp.Action)
 	builder.assertLens(0, 0, 1)
 	builder.assert([]kv{
@@ -229,6 +250,7 @@ func TestCheckTxnStatusNoLockNoWrite4C(t *testing.T) {
 }
 
 // TestEmptyResolve4C tests a completely empty resolve request.
+// 测试一个空的resolve request
 func TestEmptyResolve4C(t *testing.T) {
 	builder := newBuilder(t)
 	cmd := resolveRequest(0, 0)
@@ -240,6 +262,7 @@ func TestEmptyResolve4C(t *testing.T) {
 }
 
 // TestResolveCommit4C should commit all keys in the specified transaction.
+// 应提交一个特定事务的所有keys
 func TestResolveCommit4C(t *testing.T) {
 	builder := newBuilder(t)
 	cmd := resolveRequest(100, 120)
@@ -267,6 +290,7 @@ func TestResolveCommit4C(t *testing.T) {
 }
 
 // TestResolveRollback4C should rollback all keys in the specified transaction.
+// 应该回滚特定事务的所有keys
 func TestResolveRollback4C(t *testing.T) {
 	builder := newBuilder(t)
 	cmd := resolveRequest(100, 0)
@@ -292,6 +316,8 @@ func TestResolveRollback4C(t *testing.T) {
 }
 
 // TestResolveCommitWritten4C tests a resolve where the matched keys are already committed or rolled back.
+// 测试如果匹配的keys已经committed或者rolledback了，再resolve
+// 不变不报错
 func TestResolveCommitWritten4C(t *testing.T) {
 	builder := newBuilder(t)
 	cmd := resolveRequest(100, 120)
@@ -319,6 +345,8 @@ func TestResolveCommitWritten4C(t *testing.T) {
 }
 
 // TestResolveRollbackWritten4C tests a rollback resolve where data has already been committed or rolled back.
+// 测试如果匹配的keys已经committed或者rolledback了，再rollback
+// 不变不报错
 func TestResolveRollbackWritten4C(t *testing.T) {
 	builder := newBuilder(t)
 	cmd := resolveRequest(100, 0)

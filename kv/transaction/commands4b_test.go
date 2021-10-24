@@ -289,6 +289,7 @@ func TestPrewriteLocked4B(t *testing.T) {
 }
 
 // TestPrewriteWritten4B tests an attempted prewrite with a write conflict.
+// TestPrewriteWritten4B测试一个带有写冲突的预写尝试。带有写冲突的时候直接失败就行
 func TestPrewriteWritten4B(t *testing.T) {
 	builder := newBuilder(t)
 	cmd := builder.prewriteRequest(mutation(3, []byte{42}, kvrpcpb.Op_Put))
@@ -309,6 +310,7 @@ func TestPrewriteWritten4B(t *testing.T) {
 }
 
 // TestPrewriteWrittenNoConflict4B tests an attempted prewrite with a write already present, but no conflict.
+// 没有写冲突的时候就正常写
 func TestPrewriteWrittenNoConflict4B(t *testing.T) {
 	builder := newBuilder(t)
 	cmd := builder.prewriteRequest(mutation(3, []byte{42}, kvrpcpb.Op_Put))
@@ -352,6 +354,7 @@ func TestMultiplePrewrites4B(t *testing.T) {
 }
 
 // TestPrewriteOverwrite4B tests that two writes in the same prewrite succeed and we see the second write.
+// 同一个mutation里面, 修改同样的值两次
 func TestPrewriteOverwrite4B(t *testing.T) {
 	builder := newBuilder(t)
 	cmd := builder.prewriteRequest(mutation(3, []byte{42}, kvrpcpb.Op_Put), mutation(3, []byte{45}, kvrpcpb.Op_Put))
@@ -495,6 +498,7 @@ func TestCommitMultipleKeys4B(t *testing.T) {
 }
 
 // TestRecommitKey4B tests committing the same key multiple times in one commit.
+// 测试在同一个commit中commit一个key两次
 func TestRecommitKey4B(t *testing.T) {
 	builder := newBuilder(t)
 	cmd := builder.commitRequest([]byte{3}, []byte{3})
@@ -515,6 +519,8 @@ func TestRecommitKey4B(t *testing.T) {
 }
 
 // TestCommitConflictRollback4B tests committing a rolled back transaction.
+// TestCommitConflictRollback4B测试提交已回滚的事务。
+// 已回滚的事务只留下一条rollback类型的写记录，不动这条记录就行了
 func TestCommitConflictRollback4B(t *testing.T) {
 	builder := newBuilder(t)
 	cmd := builder.commitRequest([]byte{3})
@@ -532,6 +538,7 @@ func TestCommitConflictRollback4B(t *testing.T) {
 }
 
 // TestCommitConflictRace4B tests committing where a key is pre-written by a different transaction.
+// // TestCommitConflictRace4B测试提交，其中键是由不同的事务预先写入的。因此需要判断锁是不是自己的
 func TestCommitConflictRace4B(t *testing.T) {
 	builder := newBuilder(t)
 	cmd := builder.commitRequest([]byte{3})
@@ -551,6 +558,7 @@ func TestCommitConflictRace4B(t *testing.T) {
 }
 
 // TestCommitConflictRepeat4B tests recommitting a transaction (i.e., the same commit request is received twice).
+// 如果同样的commit request收到两次, 第二次啥都不干, 也没有异常, 一切都很正常 ts一样, 可以根据ts来判断
 func TestCommitConflictRepeat4B(t *testing.T) {
 	builder := newBuilder(t)
 	cmd := builder.commitRequest([]byte{3})
@@ -571,6 +579,7 @@ func TestCommitConflictRepeat4B(t *testing.T) {
 
 // TestCommitMissingPrewrite4a tests committing a transaction which was not prewritten (i.e., a request was lost, but
 // the commit request was not).
+// 只有commitRequest而没有prewriteRequest的时候,应该保持不变, 找不到锁, 并且最近的Write和自己的ts不一样
 func TestCommitMissingPrewrite4a(t *testing.T) {
 	builder := newBuilder(t)
 	cmd := builder.commitRequest([]byte{3})

@@ -97,33 +97,26 @@ func (txn *MvccTxn) GetValue(key []byte) ([]byte, error) {
 	// Your Code Here (4A).
 	// todo
 	// 先从cfWrite里面找
-	write, _, err := txn.searchWrite(key, txn.StartTS)
-	if err != nil || write == nil {
-		return nil, err
+	it := txn.Reader.IterCF(engine_util.CfWrite)
+	defer it.Close()
+	for it.Seek(EncodeKey(key, txn.StartTS)); it.Valid(); it.Next() {
+		writeBytes, err := it.Item().Value()
+		if err != nil {
+			continue
+		}
+		write, err := ParseWrite(writeBytes)
+		if err != nil {
+			continue
+		}
+		// 如果是WriteKindRollback就继续往前找
+		switch write.Kind {
+		case WriteKindPut:
+			return txn.Reader.GetCF(engine_util.CfDefault, EncodeKey(key, write.StartTS))
+		case WriteKindDelete:
+			return nil, nil
+		}
 	}
-	ts := write.StartTS
-	if write.Kind == WriteKindDelete {
-		return nil, nil
-	}
-	// 找到事务开始时间戳之后从cfDefault里找
-	defaultIter := txn.Reader.IterCF(engine_util.CfDefault)
-	defaultIter.Seek(EncodeKey(key, ts))
-	if !defaultIter.Valid() {
-		return nil, nil
-	}
-	defaultItem := defaultIter.Item()
-	// 从数据库拿出来的userKey要和查找的userKey相等才行
-	defaultKeyAndTs := defaultItem.Key()
-	defaultKey := DecodeUserKey(defaultKeyAndTs)
-	if !bytes.Equal(defaultKey, key) {
-		return nil, nil
-	}
-	// 最后拿出value
-	value, err := defaultItem.Value()
-	if err != nil {
-		return nil, err
-	}
-	return value, nil
+	return nil, nil
 }
 
 // PutValue adds a key/value write to this transaction.
@@ -148,6 +141,7 @@ func (txn *MvccTxn) DeleteValue(key []byte) {
 func (txn *MvccTxn) CurrentWrite(key []byte) (*Write, uint64, error) {
 	// Your Code Here (4A).
 	writeIter := txn.Reader.IterCF(engine_util.CfWrite)
+	defer writeIter.Close()
 	for writeIter.Seek(EncodeKey(key, math.MaxUint64)); writeIter.Valid(); writeIter.Next() {
 		curr := writeIter.Item()
 		writeKeyAndTs := curr.Key()
@@ -217,6 +211,7 @@ func PhysicalTime(ts uint64) uint64 {
 func (txn *MvccTxn) searchWrite(key []byte, ts uint64) (*Write, uint64, error) {
 	// Your Code Here (4A).
 	writeIter := txn.Reader.IterCF(engine_util.CfWrite)
+	defer writeIter.Close()
 	writeIter.Seek(EncodeKey(key, ts))
 	if !writeIter.Valid() {
 		return nil, 0, nil

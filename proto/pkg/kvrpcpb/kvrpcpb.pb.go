@@ -62,8 +62,10 @@ type Action int32
 
 const (
 	Action_NoAction Action = 0
+	// 锁因为超时被回滚了
 	// The lock is rolled back because it has expired.
 	Action_TTLExpireRollback Action = 1
+	// 锁不存在，TinyKV留下一个回滚记录，但是不需要删除锁
 	// The lock does not exist, TinyKV left a record of the rollback, but did not
 	// have to delete a lock.
 	Action_LockNotExistRollback Action = 2
@@ -1148,6 +1150,9 @@ func (m *ScanResponse) GetPairs() []*KvPair {
 // been committed or keys are locked by a different transaction. If the keys were never
 // locked, no action is needed but it is not an error.  If successful all keys will be
 // unlocked and all uncommitted values removed.
+// 回滚一个还未提交的事务。如果事务已经提交了并且keys被其他事务lock了，就会fail。
+// 如果keys从来都没有加锁，什么操作都不需要做，但这不是个error
+// 如果成功，所有的keys都会被解锁，并且所有未提交的值都会被removed
 type BatchRollbackRequest struct {
 	Context              *Context `protobuf:"bytes,1,opt,name=context" json:"context,omitempty"`
 	StartVersion         uint64   `protobuf:"varint,2,opt,name=start_version,json=startVersion,proto3" json:"start_version,omitempty"`
@@ -1272,6 +1277,9 @@ func (m *BatchRollbackResponse) GetError() *KeyError {
 // If the transaction has previously been rolled back or committed, return that information.
 // If the TTL of the transaction is exhausted, abort that transaction and roll back the primary lock.
 // Otherwise, returns the TTL information.
+// CheckTxnStatus报告一个事务的状态并且可能会对过期的锁采取回滚
+// 如果事务之前被回滚或者提交了，返回这个信息
+// 如果如果事务的生存时间耗尽，则中止该事务并回滚主锁。 否则返回生存时间信息。
 type CheckTxnStatusRequest struct {
 	Context              *Context `protobuf:"bytes,1,opt,name=context" json:"context,omitempty"`
 	PrimaryKey           []byte   `protobuf:"bytes,2,opt,name=primary_key,json=primaryKey,proto3" json:"primary_key,omitempty"`
@@ -1346,9 +1354,9 @@ func (m *CheckTxnStatusRequest) GetCurrentTs() uint64 {
 type CheckTxnStatusResponse struct {
 	RegionError *errorpb.Error `protobuf:"bytes,1,opt,name=region_error,json=regionError" json:"region_error,omitempty"`
 	// Three kinds of txn status:
-	// locked: lock_ttl > 0
-	// committed: commit_version > 0
-	// rolled back: lock_ttl == 0 && commit_version == 0
+	// locked: lock_ttl > 0 还在锁定中
+	// committed: commit_version > 0 已经提交了
+	// rolled back: lock_ttl == 0 && commit_version == 0 回滚了
 	LockTtl       uint64 `protobuf:"varint,2,opt,name=lock_ttl,json=lockTtl,proto3" json:"lock_ttl,omitempty"`
 	CommitVersion uint64 `protobuf:"varint,3,opt,name=commit_version,json=commitVersion,proto3" json:"commit_version,omitempty"`
 	// The action performed by TinyKV in response to the CheckTxnStatus request.
@@ -1419,6 +1427,10 @@ func (m *CheckTxnStatusResponse) GetAction() Action {
 	return Action_NoAction
 }
 
+// Resolve lock 将寻找带有给定start_timestamp的事务的所有锁
+// 如果commit_version是0，TinyKV将会回滚所有锁。
+// 如果commit_version > 0, 它会用给定的commit_timestamp提交所有的锁
+// 客户端会发送一个resolve lock请求，为所有的secondary keys；一旦它成功的提交了primary key或者回滚了primary key
 // Resolve lock will find all locks belonging to the transaction with the given start timestamp.
 // If commit_version is 0, TinyKV will rollback all locks. If commit_version is greater than
 // 0 it will commit those locks with the given commit timestamp.
