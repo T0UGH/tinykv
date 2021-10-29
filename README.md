@@ -1,6 +1,6 @@
 # TinyKV Implement
 
-
+>  [原来的README文件戳这里](README_ORIGINAL.md)
 
 ## 简介
 
@@ -48,7 +48,7 @@ TinyKV是一个容错的、可扩展的持久化KV存储：它通过基于Raft�
 
 
 
-![storeregionpeer](D:\code\golandProjects\tinykv\doc\imgs\storeregionpeer.png)
+![storeregionpeer](doc/imgs/storeregionpeer.png)
 
 
 
@@ -111,14 +111,6 @@ type StorageReader interface {
 
 
 
-## 线程安全性
-
-
-
-先开个坑
-
-
-
 ## 类图
 
 
@@ -129,11 +121,19 @@ type StorageReader interface {
 
 这里也提供要给[vsdx版本](doc\imgs\class.vsdx)的，需要用visio打开
 
-![storeregionpeer](doc\imgs\classdiagram.png)
+![class](doc/imgs/classdiagram.png)
 
 
 
 ## 举个栗子
+
+
+
+先开个坑
+
+
+
+## 线程安全性
 
 
 
