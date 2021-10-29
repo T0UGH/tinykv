@@ -53,7 +53,7 @@ type Ready struct {
 	// 一个节点在Messages被sent之前需要被保存到持久化存储的当前状态
 	pb.HardState
 
-	// Entries specifies entries to be saved to stable storage BEFORE
+	// getEntries specifies entries to be saved to stable storage BEFORE
 	// Messages are sent.
 	// 在Messages被sent之前需要保存到持久化存储的entries
 	Entries []pb.Entry
@@ -71,7 +71,7 @@ type Ready struct {
 
 	// 消息指定将entries提交到稳定存储后要发送的outbound(出站)消息。
 	// 如果它包含MessageType_MsgSnapshot消息，则当收到快照或通过调用ReportSnapshot失败快照时，应用程序务必报告回raft。
-	// Messages specifies outbound messages to be sent AFTER Entries are
+	// Messages specifies outbound messages to be sent AFTER getEntries are
 	// committed to stable storage.
 	// If it contains a MessageType_MsgSnapshot message, the application MUST report back to raft
 	// when the snapshot has been received or has failed by calling ReportSnapshot.
@@ -186,7 +186,7 @@ func (rn *RawNode) Ready() Ready {
 	rn.ready.HardState.Term = rn.Raft.Term
 	rn.ready.HardState.Vote = rn.Raft.Vote
 	rn.ready.HardState.Commit = rn.Raft.RaftLog.committed
-	// Entries
+	// getEntries
 	rn.ready.Entries = rn.Raft.RaftLog.unstableEntries()
 	// todo 2C 加Snapshot
 	if rn.Raft.RaftLog.pendingSnapshot != nil {

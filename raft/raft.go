@@ -153,9 +153,6 @@ type Raft struct {
 	// the log
 	RaftLog *RaftLog
 
-	//// todo: 为啥不需要它
-	//peers []uint64
-
 	// 记录了所有peers的进度
 	// log replication progress of each peers
 	Prs map[uint64]*Progress
@@ -207,6 +204,7 @@ type Raft struct {
 	// (Used in 3A leader transfer)
 	leadTransferee uint64
 
+	// todo 这个逻辑没有实现，但是测试用例也没有测这件事
 	// Only one conf change may be pending (in the log, but not yet
 	// applied) at a time. This is enforced via PendingConfIndex, which
 	// is set to a value >= the log index of the latest pending
@@ -261,7 +259,7 @@ func (r *Raft) sendAppend(to uint64) bool {
 	if r.Prs[to] == nil {
 		return false
 	}
-	entries, err := r.RaftLog.Entries(r.Prs[to].Next, r.RaftLog.LastIndex()+1)
+	entries, err := r.RaftLog.getEntries(r.Prs[to].Next, r.RaftLog.LastIndex()+1)
 	// 如果过界, 就改成发snapshot
 	if err == ErrCompacted {
 		r.sendSnapshot(to)

@@ -1665,7 +1665,7 @@ func (m *Message) Unmarshal(dAtA []byte) error {
 			}
 		case 7:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Entries", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field getEntries", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {

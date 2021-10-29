@@ -107,6 +107,7 @@ Conf change algorithm you will implement here is not the joint consensus algorit
 > - [x] 改`HandleRaftReady`的逻辑
 > - [ ] q: 除了在prs上边删除这些节点还需要进行哪些操作？如果是leader是否需要将它转换为follower然后停止接收命令?
 > - [ ] Only one conf change may be pending (in the log, but not yet applied) at a time. This is enforced via PendingConfIndex, which is set to a value >= the log index of the latest pending configuration change (if any). Config changes are only allowed to be proposed if the leader's applied index is greater than this value.
+> - [ ] 一次可能只有一个conf change挂起(在日志中，但还没有应用)。这是通过PendingConfIndex强制执行的，该值被设置为 >= 最近挂起的配置更改(如果有的话)的日志索引。只有当leader应用的索引大于这个值时，配置更改才被允许被Proposed。
 
 
 

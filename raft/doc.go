@@ -79,7 +79,7 @@ it contains. These steps may be performed in parallel, except as noted in step
 
 首先，您必须读取Node.Ready()通道并处理它包含的更新。这些步骤可能被并行执行，除非说明2。
 
-1. Write HardState, Entries, and Snapshot to persistent storage if they are
+1. Write HardState, getEntries, and Snapshot to persistent storage if they are
 not empty. Note that when writing an Entry with Index i, any
 previously-persisted entries with Index >= i must be discarded.
 
@@ -88,7 +88,7 @@ previously-persisted entries with Index >= i must be discarded.
 
 2. Send all Messages to the nodes named in the To field. It is important that
 no messages be sent until the latest HardState has been persisted to disk,
-and all Entries written by any previous Ready batch (Messages may be sent while
+and all getEntries written by any previous Ready batch (Messages may be sent while
 entries from the same batch are being persisted).
 
 2. 将所有消息发送到“To”字段中命名的节点。
@@ -157,7 +157,7 @@ The total state machine handling loop will look something like this:
     case <-s.Ticker:
       n.Tick()
     case rd := <-s.Node.Ready():
-      saveToStorage(rd.State, rd.Entries, rd.Snapshot)
+      saveToStorage(rd.State, rd.getEntries, rd.Snapshot)
       send(rd.Messages)
       if !raft.IsEmptySnap(rd.Snapshot) {
         processSnapshot(rd.Snapshot)

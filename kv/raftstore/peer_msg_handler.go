@@ -51,9 +51,9 @@ func (d *peerMsgHandler) HandleRaftReady() {
 	rd := d.RaftGroup.Ready()
 	for _, entry := range rd.CommittedEntries {
 		if entry.EntryType == eraftpb.EntryType_EntryConfChange {
-			d.ApplyConfChange(entry)
+			d.applyConfChange(entry)
 		} else {
-			d.ApplyEntry(entry)
+			d.applyEntry(entry)
 		}
 	}
 	// 先保存后发送消息
@@ -67,7 +67,33 @@ func (d *peerMsgHandler) HandleRaftReady() {
 	d.RaftGroup.Advance(rd)
 }
 
-func (d *peerMsgHandler) ApplyConfChange(ent eraftpb.Entry) {
+func (d *peerMsgHandler) HandleMsg(msg message.Msg) {
+	switch msg.Type {
+	case message.MsgTypeRaftMessage:
+		raftMsg := msg.Data.(*rspb.RaftMessage)
+		if err := d.onRaftMsg(raftMsg); err != nil {
+			log.Errorf("%s handle raft message error %v", d.Tag, err)
+		}
+	case message.MsgTypeRaftCmd:
+		raftCMD := msg.Data.(*message.MsgRaftCmd)
+		d.proposeRaftCommand(raftCMD.Request, raftCMD.Callback)
+	case message.MsgTypeTick:
+		d.onTick()
+	case message.MsgTypeSplitRegion:
+		split := msg.Data.(*message.MsgSplitRegion)
+		log.Infof("%s on split with %v", d.Tag, split.SplitKey)
+		d.onPrepareSplitRegion(split.RegionEpoch, split.SplitKey, split.Callback)
+	case message.MsgTypeRegionApproximateSize:
+		d.onApproximateRegionSize(msg.Data.(uint64))
+	case message.MsgTypeGcSnap:
+		gcSnap := msg.Data.(*message.MsgGCSnap)
+		d.onGCSnap(gcSnap.Snaps)
+	case message.MsgTypeStart:
+		d.startTicker()
+	}
+}
+
+func (d *peerMsgHandler) applyConfChange(ent eraftpb.Entry) {
 
 	// 解码
 	var cc eraftpb.ConfChange
@@ -136,32 +162,6 @@ func (d *peerMsgHandler) ApplyConfChange(ent eraftpb.Entry) {
 	d.finishCallback(ent.Index, ent.Term, resp, nil)
 }
 
-func (d *peerMsgHandler) HandleMsg(msg message.Msg) {
-	switch msg.Type {
-	case message.MsgTypeRaftMessage:
-		raftMsg := msg.Data.(*rspb.RaftMessage)
-		if err := d.onRaftMsg(raftMsg); err != nil {
-			log.Errorf("%s handle raft message error %v", d.Tag, err)
-		}
-	case message.MsgTypeRaftCmd:
-		raftCMD := msg.Data.(*message.MsgRaftCmd)
-		d.proposeRaftCommand(raftCMD.Request, raftCMD.Callback)
-	case message.MsgTypeTick:
-		d.onTick()
-	case message.MsgTypeSplitRegion:
-		split := msg.Data.(*message.MsgSplitRegion)
-		log.Infof("%s on split with %v", d.Tag, split.SplitKey)
-		d.onPrepareSplitRegion(split.RegionEpoch, split.SplitKey, split.Callback)
-	case message.MsgTypeRegionApproximateSize:
-		d.onApproximateRegionSize(msg.Data.(uint64))
-	case message.MsgTypeGcSnap:
-		gcSnap := msg.Data.(*message.MsgGCSnap)
-		d.onGCSnap(gcSnap.Snaps)
-	case message.MsgTypeStart:
-		d.startTicker()
-	}
-}
-
 func (d *peerMsgHandler) preProposeRaftCommand(req *raft_cmdpb.RaftCmdRequest) error {
 	// 检查store_id, 确保msg被分发到正确的地方
 	// Check store_id, make sure that the msg is dispatched to the right place.
@@ -224,7 +224,7 @@ func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *
 	// Your Code Here (2B).
 	d.peer.proposals = append(d.peer.proposals, &proposal{
 		term:  d.Term(),
-		index: d.NextIndex(),
+		index: d.nextIndex(),
 		cb:    cb,
 	})
 	// 判断是不是要ChangePeer，如果是，则调用ProposeConfChange
@@ -287,7 +287,7 @@ func (d *peerMsgHandler) onRaftBaseTick() {
 }
 
 // 规划压缩日志, 它发送一个压缩任务给Raftlog-gc worker
-func (d *peerMsgHandler) ScheduleCompactLog(truncatedIndex uint64) {
+func (d *peerMsgHandler) scheduleCompactLog(truncatedIndex uint64) {
 	raftLogGCTask := &runner.RaftLogGCTask{
 		RaftEngine: d.ctx.engine.Raft,
 		RegionID:   d.regionId,
@@ -724,7 +724,7 @@ func (d *peerMsgHandler) applyAdminRequest(req *raft_cmdpb.AdminRequest) (*raft_
 		// 压缩内存中的log
 		d.RaftGroup.Raft.RaftLog.Compact(req.CompactLog.CompactIndex, req.CompactLog.CompactTerm)
 		// 调用ScheduleCompactLog
-		d.ScheduleCompactLog(req.CompactLog.CompactIndex)
+		d.scheduleCompactLog(req.CompactLog.CompactIndex)
 		// 返回
 		resp.CompactLog = new(raft_cmdpb.CompactLogResponse)
 	case raft_cmdpb.AdminCmdType_Split:
@@ -787,7 +787,7 @@ func (d *peerMsgHandler) applyAdminRequest(req *raft_cmdpb.AdminRequest) (*raft_
 	return resp, nil
 }
 
-func (d *peerMsgHandler) ApplyEntry(ent eraftpb.Entry) {
+func (d *peerMsgHandler) applyEntry(ent eraftpb.Entry) {
 	var cmdReq raft_cmdpb.RaftCmdRequest
 	err := cmdReq.Unmarshal(ent.Data)
 	if err != nil {
@@ -925,4 +925,8 @@ func (d *peerMsgHandler) maybeUpdateRegionBySnap(rd *raft.Ready) {
 		d.updateRegion(snapRegion)
 	}
 
+}
+
+func (d *peerMsgHandler) nextIndex() uint64 {
+	return d.peer.RaftGroup.Raft.RaftLog.LastIndex() + 1
 }

@@ -13,6 +13,7 @@ import (
 
 // Handle will resolve t's storeID into the address of the TinyKV node which should handle t. t's callback is then
 // called with that address.
+// Handle 会将 t 的 storeID 解析为应该处理 t 的 TinyKV 节点的地址。 然后使用该地址调用 t 的回调。
 func (r *resolverRunner) Handle(t worker.Task) {
 	data := t.(*resolveAddrTask)
 	data.callback(r.getAddr(data.storeID))
@@ -27,7 +28,7 @@ type storeAddr struct {
 
 type resolverRunner struct {
 	schedulerClient scheduler_client.Client
-	storeAddrs      map[uint64]storeAddr
+	storeAddrs      map[uint64]storeAddr //相当于做了一个缓存，如果已经获得了地址就不用再次获得了
 }
 
 type resolveAddrTask struct {
@@ -42,6 +43,7 @@ func newResolverRunner(schedulerClient scheduler_client.Client) *resolverRunner 
 	}
 }
 
+// 实际获取地址
 func (r *resolverRunner) getAddr(id uint64) (string, error) {
 	if sa, ok := r.storeAddrs[id]; ok {
 		if time.Since(sa.lastUpdate).Seconds() < storeAddressRefreshSeconds {

@@ -44,10 +44,13 @@ func (t *ServerTransport) SendStore(storeID uint64, msg *raft_serverpb.RaftMessa
 	}
 	log.Debug("begin to resolve store address. storeID: %v", storeID)
 	t.resolving.Store(storeID, struct{}{})
+	// 如果没有地址就先解析地址然后再发送消息
 	t.Resolve(storeID, msg)
 }
 
 func (t *ServerTransport) Resolve(storeID uint64, msg *raft_serverpb.RaftMessage) {
+	// callback是在resolveWorker线程中执行的回调
+	// 完成实际的解析地址工作
 	callback := func(addr string, err error) {
 		// clear resolving
 		t.resolving.Delete(storeID)

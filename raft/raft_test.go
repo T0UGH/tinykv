@@ -203,7 +203,7 @@ func TestLeaderElectionOverwriteNewerLogs2AB(t *testing.T) {
 	for i := range n.peers {
 		sm := n.peers[i].(*Raft)
 		// 这里修改是因为RaftLog的实现方式, 加了一个dummy元素
-		entries, _ := sm.RaftLog.Entries(sm.RaftLog.FirstIndex(), sm.RaftLog.LastIndex()+1)
+		entries, _ := sm.RaftLog.getEntries(sm.RaftLog.FirstIndex(), sm.RaftLog.LastIndex()+1)
 		if len(entries) != 2 {
 			t.Fatalf("node %d: len(entries) == %d, want 2", i, len(entries))
 		}

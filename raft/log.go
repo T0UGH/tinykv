@@ -121,7 +121,7 @@ func (l *RaftLog) nextEnts() []pb.Entry {
 }
 
 // 返回i之后的所有条目
-func (l *RaftLog) Entries(lo, hi uint64) ([]pb.Entry, error) {
+func (l *RaftLog) getEntries(lo, hi uint64) ([]pb.Entry, error) {
 	offset := l.entries[0].Index
 	if lo <= offset {
 		return nil, ErrCompacted
@@ -171,11 +171,11 @@ func (l *RaftLog) Append(entries []pb.Entry) error {
 	first := l.FirstIndex()
 	last := entries[0].Index + uint64(len(entries)) - 1
 
-	// shortcut if there is no new entry.
+	// return if there is no new entry.  如果没有新的日志就直接返回
 	if last < first {
 		return nil
 	}
-	// truncate compacted entries
+	// truncate compacted entries 截断已经被压缩的日志
 	if first > entries[0].Index {
 		entries = entries[first-entries[0].Index:]
 	}
@@ -187,6 +187,7 @@ func (l *RaftLog) Append(entries []pb.Entry) error {
 		l.entries = append(l.entries, entries...)
 	case uint64(len(l.entries)) == offset:
 		l.entries = append(l.entries, entries...)
+	// 如果小于，说明中间有空，这时候就不添加日志了, 但这里直接panic可能不太好
 	default:
 		log.Panicf("missing log entry [last: %d, append at: %d]",
 			l.LastIndex(), entries[0].Index)
@@ -206,12 +207,14 @@ func (l *RaftLog) UpdateCommit(commit uint64) bool {
 	return false
 }
 
+// 压缩内存中的日志
+// 如果不压缩，内存中的日志将无限增长
 func (l *RaftLog) Compact(compactIndex, compactTerm uint64) {
 
 	var remain []pb.Entry
 	if compactIndex < l.LastIndex() {
 		// todo 这里有个异常没处理
-		remain, _ = l.Entries(compactIndex+1, l.LastIndex()+1)
+		remain, _ = l.getEntries(compactIndex+1, l.LastIndex()+1)
 	}
 	l.entries = make([]pb.Entry, 1)
 	l.entries[0].Index = compactIndex

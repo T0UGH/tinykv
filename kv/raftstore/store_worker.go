@@ -150,6 +150,9 @@ func (d *storeWorker) checkMsg(msg *rspb.RaftMessage) (bool, error) {
 	return false, nil
 }
 
+// 发送失败的MsgTypeRaftMessage会被包装为MsgTypeStoreRaftMessage再重新找到合适的人发送一遍,
+// 可能是因为Store上添加了新peer的元数据，但是实际上新peer还没有被初始化，所以router发现第一条发不出去的消息后，会在下面的方法中初始化peer
+// 初始化完新peer后自然能发送出去
 func (d *storeWorker) onRaftMessage(msg *rspb.RaftMessage) error {
 	regionID := msg.RegionId
 	if err := d.ctx.router.send(regionID, message.Msg{Type: message.MsgTypeRaftMessage, Data: msg}); err == nil {

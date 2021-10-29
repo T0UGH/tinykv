@@ -197,7 +197,7 @@ func (rs *RaftStorage) Snapshot(stream tinykvpb.TinyKv_SnapshotServer) error {
 // 启动
 func (rs *RaftStorage) Start() error {
 	cfg := rs.config
-	// 新建一个调度器客户端, 目前没用，调度器不在project2中
+	// 新建一个调度器客户端
 	schedulerClient, err := scheduler_client.NewClient(strings.Split(cfg.SchedulerAddr, ","), "")
 	if err != nil {
 		return err

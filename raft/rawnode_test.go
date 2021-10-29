@@ -175,7 +175,7 @@ func TestRawNodeStart2AC(t *testing.T) {
 	rd = rawNode.Ready()
 	// 检验这条消息被rd返回了, 并且被提交了, 并且就只有这一条不多不少
 	if el := len(rd.Entries); el != len(rd.CommittedEntries) || el != 1 {
-		t.Errorf("got len(Entries): %+v, len(CommittedEntries): %+v, want %+v", el, len(rd.CommittedEntries), 1)
+		t.Errorf("got len(getEntries): %+v, len(CommittedEntries): %+v, want %+v", el, len(rd.CommittedEntries), 1)
 	}
 	// 检测Data是不是完全相等
 	if !reflect.DeepEqual(rd.Entries[0].Data, rd.CommittedEntries[0].Data) || !reflect.DeepEqual(rd.Entries[0].Data, []byte("foo")) {

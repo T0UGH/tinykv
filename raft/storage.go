@@ -22,7 +22,7 @@ import (
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
 
-// ErrCompacted is returned by Storage.Entries/Compact when a requested
+// ErrCompacted is returned by Storage.getEntries/Compact when a requested
 // index is unavailable because it predates the last snapshot.
 var ErrCompacted = errors.New("requested index is unavailable due to compaction")
 
@@ -53,9 +53,9 @@ type Storage interface {
 	InitialState() (pb.HardState, pb.ConfState, error)
 
 	// Entries返回[lo，hi)范围内的日志条目的那一部分日志。
-	// Entries returns a slice of log entries in the range [lo,hi).
+	// getEntries returns a slice of log entries in the range [lo,hi).
 	// MaxSize limits the total size of the log entries returned, but
-	// Entries returns at least one entry if any.
+	// getEntries returns at least one entry if any.
 	Entries(lo, hi uint64) ([]pb.Entry, error)
 
 	// 返回entry i对应的Term号
@@ -71,7 +71,7 @@ type Storage interface {
 
 	// FirstIndex返回日志中第一个条目的索引，更老的已经被打包到SnapShot中了
 	// FirstIndex returns the index of the first log entry that is
-	// possibly available via Entries (older entries have been incorporated
+	// possibly available via getEntries (older entries have been incorporated
 	// into the latest Snapshot; if storage only contains the dummy entry the
 	// first log entry is not available).
 	FirstIndex() (uint64, error)
@@ -126,7 +126,7 @@ func (ms *MemoryStorage) SetHardState(st pb.HardState) error {
 	return nil
 }
 
-// Entries implements the Storage interface.
+// getEntries implements the Storage interface.
 func (ms *MemoryStorage) Entries(lo, hi uint64) ([]pb.Entry, error) {
 	ms.Lock()
 	defer ms.Unlock()

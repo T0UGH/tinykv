@@ -294,10 +294,6 @@ func (p *peer) Send(trans Transport, msgs []eraftpb.Message) {
 	}
 }
 
-func (d *peerMsgHandler) NextIndex() uint64 {
-	return d.peer.RaftGroup.Raft.RaftLog.LastIndex() + 1
-}
-
 /// Collects all pending peers and update `peers_start_pending_time`.
 func (p *peer) CollectPendingPeers() []*metapb.Peer {
 	pendingPeers := make([]*metapb.Peer, 0, len(p.Region().GetPeers()))
@@ -368,6 +364,9 @@ func (p *peer) Term() uint64 {
 }
 
 // 定期发送RegionHeartBeat来更新client端的Region信息
+// 如果AnyNewPeerCatchUp会发送心跳
+// leader在applyAdminRequest时会发送心跳
+// 此外定期的tick也会发送心跳
 func (p *peer) HeartbeatScheduler(ch chan<- worker.Task) {
 	clonedRegion := new(metapb.Region)
 	err := util.CloneMsg(p.Region(), clonedRegion)
